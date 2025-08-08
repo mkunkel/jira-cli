@@ -12,11 +12,18 @@ program
   .option('--dry-run', 'Show what would be executed without creating the ticket')
   .option('--dryrun', 'Show what would be executed without creating the ticket (alias for --dry-run)')
   .option('--test-connection', 'Test the connection to Jira with current configuration')
+  .option('--list-fields', 'List all custom fields in your Jira instance to help find field IDs')
+  .option('--field-options <fieldId>', 'List available options for a specific custom field ID')
+  .option('--create-meta', 'Show create metadata for the project (includes field options)')
   .action(async (options) => {
     const cli = new JiraTicketCLI();
-    
+
     if (options.testConnection) {
       await cli.testConnection();
+    } else if (options.listFields) {
+      await cli.listCustomFields();
+    } else if (options.fieldOptions) {
+      await cli.listFieldOptions(options.fieldOptions);
     } else {
       const isDryRun = options.dryRun || options.dryrun;
       await cli.run(isDryRun);

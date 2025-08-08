@@ -40,7 +40,11 @@ Create a `.jirarc` file in your home directory or project root:
     "workType": "Task",
     "priority": "Medium",
     "ticketClassification": "Feature/Enhancement",
-    "softwareCapitalizationProject": "Lonely Planet Website"
+    "softwareCapitalizationProjects": [
+      "Lonely Planet Website",
+      "Mobile App - iOS",
+      "Backend Services"
+    ]
   }
 }
 ```
@@ -123,19 +127,33 @@ jira-ticket --help
    - Make sure you have permission to create tickets in that project
 
 4. **Custom fields not working:**
-   - The CLI includes placeholders for custom fields
-   - You'll need to find your specific field IDs in Jira and update `src/jira-service.js`
+   - Use `./bin/jira-ticket.js --list-fields` to find your field IDs
+   - Update the `customFields` section in your `.jirarc` file
 
-### Getting Custom Field IDs
+### Finding Custom Field IDs
 
-To find custom field IDs for your Jira instance:
-1. Go to Jira Settings → Issues → Custom fields
-2. Find your fields and note their IDs (usually like `customfield_10001`)
-3. Update the `buildCreateTicketPayload` method in `src/jira-service.js`
+The CLI provides tools to help you find custom field IDs:
 
-Example:
-```javascript
-// Add these lines in buildCreateTicketPayload method
+1. **List all fields:**
+   ```bash
+   ./bin/jira-ticket.js --list-fields
+   ```
+
+2. **View field options (for select fields):**
+   ```bash
+   ./bin/jira-ticket.js --field-options customfield_10001
+   ```
+
+3. **Update your configuration:**
+   Add the field IDs to your `.jirarc`:
+   ```json
+   {
+     "customFields": {
+       "softwareCapitalizationProject": "customfield_10801",
+       "ticketClassification": "customfield_10238"
+     }
+   }
+   ```
 payload.fields.customfield_10001 = ticketData.ticketClassification;
 payload.fields.customfield_10002 = ticketData.softwareCapitalizationProject;
 ```

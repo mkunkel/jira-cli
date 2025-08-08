@@ -1,6 +1,6 @@
 {
-  "projectKey": "EXAMPLE",
-  "jiraUrl": "https://yourcompany.atlassian.net",
+  "projectKey": "LPWEB",
+  "jiraUrl": "https://redventures.atlassian.net",
   "auth": {
     "email": "your.email@company.com",
     "apiToken": "your_api_token_here"
@@ -9,7 +9,13 @@
     "workType": "Task",
     "priority": "Medium",
     "ticketClassification": "Feature/Enhancement",
-    "softwareCapitalizationProject": "Lonely Planet Website"
+    "softwareCapitalizationProjects": [
+      "Lonely Planet Website"
+    ]
+  },
+  "customFields": {
+    "softwareCapitalizationProject": "customfield_10801",
+    "ticketClassification": "customfield_10238"
   },
   "ui": {
     "pageSize": 10

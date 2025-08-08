@@ -14,10 +14,10 @@ const helpProcess = spawn('node', [path.join(__dirname, 'bin/jira-ticket.js'), '
 
 helpProcess.on('close', (code) => {
   console.log(`\nHelp command completed with code: ${code}\n`);
-  
+
   console.log('2. To test the interactive CLI in dry-run mode, run:');
   console.log('   ./bin/jira-ticket.js --dry-run\n');
-  
+
   console.log('3. Example responses for testing:');
   console.log('   - Work type: Bug');
   console.log('   - Summary: Fix login issue');
@@ -26,6 +26,6 @@ helpProcess.on('close', (code) => {
   console.log('   - Priority: High');
   console.log('   - Classification: Bug');
   console.log('   - Project: Lonely Planet Website\n');
-  
+
   console.log('The CLI will show what API call would be made without actually creating a ticket.');
 });

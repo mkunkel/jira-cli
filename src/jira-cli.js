@@ -19,13 +19,13 @@ class JiraTicketCLI {
   async run(isDryRun = false) {
     try {
       console.log(chalk.blue('🎫 Jira Ticket Creator\n'));
-      
+
       // Load configuration
       await this.loadConfig();
-      
+
       // Collect ticket information
       const ticketData = await this.collectTicketData();
-      
+
       // Create the ticket or show dry run
       if (isDryRun) {
         await this.showDryRun(ticketData);
@@ -51,7 +51,7 @@ class JiraTicketCLI {
           const configContent = await fs.readFile(configPath, 'utf8');
           this.config = JSON.parse(configContent);
           console.log(chalk.green(`✓ Configuration loaded from: ${configPath}\n`));
-          return;
+          return this.config;
         } catch (error) {
           console.warn(chalk.yellow(`Warning: Invalid JSON in ${configPath}`));
         }
@@ -61,6 +61,7 @@ class JiraTicketCLI {
     // If no config found, create a default one
     console.log(chalk.yellow('No configuration file found. Creating default configuration...\n'));
     await this.createDefaultConfig();
+    return this.config;
   }
 
   async createDefaultConfig() {
@@ -92,7 +93,7 @@ class JiraTicketCLI {
     ];
 
     const configData = await inquirer.prompt(configQuestions);
-    
+
     this.config = {
       projectKey: configData.projectKey,
       jiraUrl: configData.jiraUrl,
@@ -118,7 +119,7 @@ class JiraTicketCLI {
 
   async collectTicketData() {
     const pageSize = this.config?.ui?.pageSize || 10;
-    
+
     // Fetch components from Jira
     const spinner = ora('Loading project components...').start();
     let components;
@@ -141,6 +142,10 @@ class JiraTicketCLI {
       ];
     }
 
+    // Get software capitalization projects from config
+    const configProjects = this.config?.defaults?.softwareCapitalizationProjects || ['Lonely Planet Website'];
+    console.log(chalk.green(`✓ Software capitalization projects loaded from config (${configProjects.length} projects)`));
+
     // Collect basic ticket information first
     const basicQuestions = [
       {
@@ -149,7 +154,7 @@ class JiraTicketCLI {
         message: '1) Select work type:',
         choices: [
           'Task',
-          'Bug', 
+          'Bug',
           'Epic',
           'Incident',
           'Story',
@@ -213,27 +218,25 @@ class JiraTicketCLI {
         default: this.config?.defaults?.ticketClassification || 'Feature/Enhancement',
         loop: false,
         pageSize: pageSize
-      },
-      {
-        type: 'input',
-        name: 'softwareCapitalizationProject',
-        message: '7) Enter software capitalization project:',
-        default: this.config?.defaults?.softwareCapitalizationProject || 'Lonely Planet Website'
       }
     ];
 
     const remainingAnswers = await inquirer.prompt(remainingQuestions);
 
+    // Handle software capitalization project selection with autocomplete
+    const selectedProject = await this.selectSoftwareCapitalizationProject(configProjects);
+
     return {
       ...basicAnswers,
       components: selectedComponents,
-      ...remainingAnswers
+      ...remainingAnswers,
+      softwareCapitalizationProject: selectedProject
     };
   }
 
   async selectComponents(availableComponents) {
     const selectedComponents = [];
-    
+
     while (true) {
       const remainingComponents = availableComponents.filter(
         comp => !selectedComponents.includes(comp)
@@ -247,13 +250,13 @@ class JiraTicketCLI {
       const componentQuestion = {
         type: 'autocomplete',
         name: 'component',
-        message: selectedComponents.length === 0 
+        message: selectedComponents.length === 0
           ? '4) Select components (type to filter, Enter to select, empty Enter to finish):'
           : `   Select another component (${selectedComponents.length} selected, empty Enter to finish):`,
         source: (answersSoFar, input) => {
           return new Promise((resolve) => {
             const searchTerm = input || '';
-            const filtered = remainingComponents.filter(comp => 
+            const filtered = remainingComponents.filter(comp =>
               comp.toLowerCase().includes(searchTerm.toLowerCase())
             );
             // Add an option to finish selection
@@ -268,14 +271,14 @@ class JiraTicketCLI {
       };
 
       const answer = await inquirer.prompt([componentQuestion]);
-      
+
       if (!answer.component || answer.component === '--- Finish selecting components ---') {
         break;
       }
 
       selectedComponents.push(answer.component);
       console.log(chalk.green(`   ✓ Added: ${answer.component}`));
-      
+
       if (selectedComponents.length > 0) {
         console.log(chalk.cyan(`   Selected (${selectedComponents.length}): ${selectedComponents.join(', ')}`));
       }
@@ -288,12 +291,87 @@ class JiraTicketCLI {
     return selectedComponents;
   }
 
+  async selectSoftwareCapitalizationProject(availableProjects) {
+    // Get the list from config, fallback to the passed projects if config doesn't have the new format
+    const configProjects = this.config?.defaults?.softwareCapitalizationProjects ||
+                          (this.config?.defaults?.softwareCapitalizationProject ?
+                           [this.config.defaults.softwareCapitalizationProject] :
+                           availableProjects);
+
+    const ADD_NEW_OPTION = '+ Add new software capitalization project...';
+    const allOptions = [...configProjects, ADD_NEW_OPTION];
+
+    const projectQuestion = {
+      type: 'autocomplete',
+      name: 'project',
+      message: '7) Select software capitalization project (type to filter, or select "Add new"):',
+      source: (answersSoFar, input) => {
+        return new Promise((resolve) => {
+          const searchTerm = input || '';
+          const filtered = allOptions.filter(project =>
+            project.toLowerCase().includes(searchTerm.toLowerCase())
+          );
+          resolve(filtered);
+        });
+      },
+      pageSize: this.config?.ui?.pageSize || 10,
+      default: configProjects[0] || 'Lonely Planet Website'
+    };
+
+    const answer = await inquirer.prompt([projectQuestion]);
+
+    // If user selected to add a new project
+    if (answer.project === ADD_NEW_OPTION) {
+      const newProjectQuestion = {
+        type: 'input',
+        name: 'newProject',
+        message: '   Enter new software capitalization project name:',
+        validate: (input) => {
+          if (!input || input.trim().length === 0) {
+            return 'Project name cannot be empty';
+          }
+          if (configProjects.includes(input.trim())) {
+            return 'This project already exists in the list';
+          }
+          return true;
+        }
+      };
+
+      const newProjectAnswer = await inquirer.prompt([newProjectQuestion]);
+      const newProject = newProjectAnswer.newProject.trim();
+
+      // Add to config and save
+      await this.addProjectToConfig(newProject);
+
+      console.log(chalk.green(`✓ Added "${newProject}" to your project list`));
+      return newProject;
+    }
+
+    return answer.project;
+  }
+
+  async addProjectToConfig(newProject) {
+    try {
+      // Update the in-memory config
+      if (!this.config.defaults.softwareCapitalizationProjects) {
+        this.config.defaults.softwareCapitalizationProjects = [];
+      }
+      this.config.defaults.softwareCapitalizationProjects.push(newProject);
+
+      // Save back to file
+      const configPath = path.join(process.cwd(), '.jirarc');
+      await fs.writeFile(configPath, JSON.stringify(this.config, null, 2));
+    } catch (error) {
+      console.warn(chalk.yellow(`Warning: Could not save new project to config: ${error.message}`));
+    }
+  }
+
   async showDryRun(ticketData) {
     console.log(chalk.yellow('\n🔍 DRY RUN MODE - No ticket will be created\n'));
-    
+
     console.log(chalk.cyan('Ticket Data:'));
     console.log(chalk.white(JSON.stringify(ticketData, null, 2)));
-    
+
     console.log(chalk.cyan('\nJira API Call that would be made:'));
     const apiCall = this.jiraService.buildCreateTicketPayload(ticketData, this.config);
     console.log(chalk.white('POST'), chalk.blue(`${this.config.jiraUrl}/rest/api/3/issue`));
@@ -306,16 +384,16 @@ class JiraTicketCLI {
 
   async createTicket(ticketData) {
     const spinner = ora('Creating Jira ticket...').start();
-    
+
     try {
       const result = await this.jiraService.createTicket(ticketData, this.config);
       spinner.succeed('Ticket created successfully!');
-      
+
       console.log(chalk.green('\n✅ Ticket Created:'));
       console.log(chalk.white(`Key: ${result.key}`));
       console.log(chalk.white(`ID: ${result.id}`));
       console.log(chalk.blue(`Link: ${this.config.jiraUrl}/browse/${result.key}`));
-      
+
     } catch (error) {
       spinner.fail('Failed to create ticket');
       throw error;
@@ -325,33 +403,143 @@ class JiraTicketCLI {
   async testConnection() {
     try {
       console.log(chalk.blue('🔗 Testing Jira Connection\n'));
-      
+
       // Load configuration
       await this.loadConfig();
-      
+
       const spinner = ora('Testing connection to Jira...').start();
-      
+
       const userInfo = await this.jiraService.testConnection(this.config);
       spinner.succeed('Connection successful!');
-      
+
       console.log(chalk.green('\n✅ Connected to Jira:'));
       console.log(chalk.white(`User: ${userInfo.displayName} (${userInfo.emailAddress})`));
       console.log(chalk.white(`Account ID: ${userInfo.accountId}`));
       console.log(chalk.white(`Jira URL: ${this.config.jiraUrl}`));
       console.log(chalk.white(`Project Key: ${this.config.projectKey}`));
-      
+
       // Test component fetching
       const componentSpinner = ora('Testing component access...').start();
       try {
         const components = await this.jiraService.getProjectComponents(this.config);
         componentSpinner.succeed(`Found ${components.length} components in project`);
-        console.log(chalk.white(`Components: ${components.join(', ')}`));
+        console.log(chalk.white(`Components: ${components.slice(0, 3).join(', ')}${components.length > 3 ? '...' : ''}`));
       } catch (error) {
         componentSpinner.warn('Could not fetch components (will use defaults)');
       }
-      
+
+      // Test project fetching
+      const projectSpinner = ora('Testing software capitalization project access...').start();
+      try {
+        const projects = await this.jiraService.getSoftwareCapitalizationProjects(this.config);
+        projectSpinner.succeed(`Found ${projects.length} software capitalization projects`);
+        console.log(chalk.white(`Projects: ${projects.slice(0, 3).join(', ')}${projects.length > 3 ? '...' : ''}`));
+      } catch (error) {
+        projectSpinner.warn('Could not fetch projects (will use defaults)');
+      }
+
     } catch (error) {
       console.error(chalk.red('Connection failed:'), error.message);
+      process.exit(1);
+    }
+  }
+
+  async listCustomFields() {
+    try {
+      console.log(chalk.blue('🔍 Listing Custom Fields\n'));
+
+      // Load configuration
+      await this.loadConfig();
+
+      const spinner = ora('Fetching all custom fields...').start();
+
+      const fields = await this.jiraService.getAllFields(this.config);
+      spinner.succeed(`Found ${fields.length} custom fields`);
+
+      console.log(chalk.green('\n📋 Custom Fields in your Jira instance:\n'));
+
+      // Group fields by relevance
+      const relevantFields = [];
+      const otherFields = [];
+
+      fields.forEach(field => {
+        const name = field.name.toLowerCase();
+        if (name.includes('software') ||
+            name.includes('capitalization') ||
+            name.includes('capitalize') ||
+            name.includes('classification') ||
+            name.includes('category') ||
+            name.includes('project')) {
+          relevantFields.push(field);
+        } else {
+          otherFields.push(field);
+        }
+      });
+
+      if (relevantFields.length > 0) {
+        console.log(chalk.yellow('🎯 Potentially Relevant Fields:'));
+        relevantFields.forEach(field => {
+          console.log(chalk.cyan(`  ${field.id}`), chalk.white(`- ${field.name}`));
+          if (field.description) {
+            console.log(chalk.gray(`    Description: ${field.description}`));
+          }
+        });
+        console.log('');
+      }
+
+      console.log(chalk.yellow('📄 All Custom Fields:'));
+      otherFields.forEach(field => {
+        console.log(chalk.cyan(`  ${field.id}`), chalk.white(`- ${field.name}`));
+      });
+
+      console.log(chalk.green('\n💡 To use a field, add it to your .jirarc file:'));
+      console.log(chalk.white('  "customFields": {'));
+      console.log(chalk.white('    "softwareCapitalizationProject": "customfield_XXXXX",'));
+      console.log(chalk.white('    "ticketClassification": "customfield_YYYYY"'));
+      console.log(chalk.white('  }'));
+
+    } catch (error) {
+      console.error(chalk.red('Failed to list fields:'), error.message);
+      process.exit(1);
+    }
+  }
+
+  async listFieldOptions(fieldId) {
+    try {
+      console.log(chalk.blue(`🔍 Getting options for field: ${fieldId}`));
+
+      const config = await this.loadConfig();
+
+      this.jiraService.initializeClient(config);
+      const options = await this.jiraService.getFieldOptions(fieldId);
+
+      if (!options || options.length === 0) {
+        console.log(chalk.yellow('⚠️  No options found for this field.'));
+        console.log(chalk.white('This could mean:'));
+        console.log(chalk.white('  • The field is a text input (not a select field)'));
+        console.log(chalk.white('  • The field doesn\'t exist'));
+        console.log(chalk.white('  • You don\'t have permission to view the field options'));
+        return;
+      }
+
+      console.log(chalk.green(`\n✅ Found ${options.length} option(s):`));
+      console.log('');
+
+      options.forEach((option, index) => {
+        const displayValue = option.value || option.name || option.id || option;
+        const description = option.description ? ` (${option.description})` : '';
+        console.log(chalk.cyan(`  ${index + 1}.`), chalk.white(`${displayValue}${description}`));
+
+        if (option.id && option.id !== displayValue) {
+          console.log(chalk.gray(`     ID: ${option.id}`));
+        }
+      });
+
+      console.log('');
+      console.log(chalk.blue('💡 Usage: Use these exact values when setting defaults in your .jirarc file'));
+
+    } catch (error) {
+      console.error(chalk.red('Failed to get field options:'), error.message);
       process.exit(1);
     }
   }
