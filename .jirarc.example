@@ -1,0 +1,14 @@
+{
+  "projectKey": "EXAMPLE",
+  "jiraUrl": "https://yourcompany.atlassian.net",
+  "auth": {
+    "email": "your.email@company.com",
+    "apiToken": "your_api_token_here"
+  },
+  "defaults": {
+    "workType": "Task",
+    "priority": "Medium",
+    "ticketClassification": "Feature/Enhancement",
+    "softwareCapitalizationProject": "Lonely Planet Website"
+  }
+}

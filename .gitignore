@@ -1,0 +1,5 @@
+node_modules/
+.jirarc
+*.log
+.DS_Store
+.env
