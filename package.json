@@ -15,6 +15,7 @@
   "license": "MIT",
   "dependencies": {
     "inquirer": "^8.2.6",
+    "inquirer-autocomplete-prompt": "^2.0.1",
     "axios": "^1.6.0",
     "commander": "^11.1.0",
     "chalk": "^4.1.2",

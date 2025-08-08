@@ -1,10 +1,14 @@
 const inquirer = require('inquirer');
+const autocomplete = require('inquirer-autocomplete-prompt');
 const fs = require('fs-extra');
 const path = require('path');
 const os = require('os');
 const chalk = require('chalk');
 const ora = require('ora');
 const JiraService = require('./jira-service');
+
+// Register the autocomplete prompt
+inquirer.registerPrompt('autocomplete', autocomplete);
 
 class JiraTicketCLI {
   constructor() {
@@ -136,8 +140,9 @@ class JiraTicketCLI {
         'DevOps'
       ];
     }
-    
-    const questions = [
+
+    // Collect basic ticket information first
+    const basicQuestions = [
       {
         type: 'list',
         name: 'workType',
@@ -167,15 +172,16 @@ class JiraTicketCLI {
         name: 'description',
         message: '3) Enter ticket description (this will open your default editor):',
         validate: input => input.length > 0 || 'Description is required'
-      },
-      {
-        type: 'checkbox',
-        name: 'components',
-        message: '4) Select components:',
-        choices: components,
-        loop: false,
-        pageSize: pageSize
-      },
+      }
+    ];
+
+    const basicAnswers = await inquirer.prompt(basicQuestions);
+
+    // Handle components selection with autocomplete
+    const selectedComponents = await this.selectComponents(components);
+
+    // Continue with remaining questions
+    const remainingQuestions = [
       {
         type: 'list',
         name: 'priority',
@@ -216,7 +222,70 @@ class JiraTicketCLI {
       }
     ];
 
-    return await inquirer.prompt(questions);
+    const remainingAnswers = await inquirer.prompt(remainingQuestions);
+
+    return {
+      ...basicAnswers,
+      components: selectedComponents,
+      ...remainingAnswers
+    };
+  }
+
+  async selectComponents(availableComponents) {
+    const selectedComponents = [];
+    
+    while (true) {
+      const remainingComponents = availableComponents.filter(
+        comp => !selectedComponents.includes(comp)
+      );
+
+      if (remainingComponents.length === 0) {
+        console.log(chalk.yellow('All components have been selected.'));
+        break;
+      }
+
+      const componentQuestion = {
+        type: 'autocomplete',
+        name: 'component',
+        message: selectedComponents.length === 0 
+          ? '4) Select components (type to filter, Enter to select, empty Enter to finish):'
+          : `   Select another component (${selectedComponents.length} selected, empty Enter to finish):`,
+        source: (answersSoFar, input) => {
+          return new Promise((resolve) => {
+            const searchTerm = input || '';
+            const filtered = remainingComponents.filter(comp => 
+              comp.toLowerCase().includes(searchTerm.toLowerCase())
+            );
+            // Add an option to finish selection
+            const options = [...filtered];
+            if (searchTerm === '') {
+              options.unshift('--- Finish selecting components ---');
+            }
+            resolve(options);
+          });
+        },
+        pageSize: this.config?.ui?.pageSize || 10
+      };
+
+      const answer = await inquirer.prompt([componentQuestion]);
+      
+      if (!answer.component || answer.component === '--- Finish selecting components ---') {
+        break;
+      }
+
+      selectedComponents.push(answer.component);
+      console.log(chalk.green(`   ✓ Added: ${answer.component}`));
+      
+      if (selectedComponents.length > 0) {
+        console.log(chalk.cyan(`   Selected (${selectedComponents.length}): ${selectedComponents.join(', ')}`));
+      }
+    }
+
+    if (selectedComponents.length === 0) {
+      console.log(chalk.yellow('   No components selected.'));
+    }
+
+    return selectedComponents;
   }
 
   async showDryRun(ticketData) {
