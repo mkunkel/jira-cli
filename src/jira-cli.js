@@ -142,10 +142,6 @@ class JiraTicketCLI {
       ];
     }
 
-    // Get software capitalization projects from config
-    const configProjects = this.config?.defaults?.softwareCapitalizationProjects || ['Lonely Planet Website'];
-    console.log(chalk.green(`✓ Software capitalization projects loaded from config (${configProjects.length} projects)`));
-
     // Collect basic ticket information first
     const basicQuestions = [
       {
@@ -223,14 +219,10 @@ class JiraTicketCLI {
 
     const remainingAnswers = await inquirer.prompt(remainingQuestions);
 
-    // Handle software capitalization project selection with autocomplete
-    const selectedProject = await this.selectSoftwareCapitalizationProject(configProjects);
-
     return {
       ...basicAnswers,
       components: selectedComponents,
-      ...remainingAnswers,
-      softwareCapitalizationProject: selectedProject
+      ...remainingAnswers
     };
   }
 
@@ -291,81 +283,6 @@ class JiraTicketCLI {
     return selectedComponents;
   }
 
-  async selectSoftwareCapitalizationProject(availableProjects) {
-    // Get the list from config, fallback to the passed projects if config doesn't have the new format
-    const configProjects = this.config?.defaults?.softwareCapitalizationProjects ||
-                          (this.config?.defaults?.softwareCapitalizationProject ?
-                           [this.config.defaults.softwareCapitalizationProject] :
-                           availableProjects);
-
-    const ADD_NEW_OPTION = '+ Add new software capitalization project...';
-    const allOptions = [...configProjects, ADD_NEW_OPTION];
-
-    const projectQuestion = {
-      type: 'autocomplete',
-      name: 'project',
-      message: '7) Select software capitalization project (type to filter, or select "Add new"):',
-      source: (answersSoFar, input) => {
-        return new Promise((resolve) => {
-          const searchTerm = input || '';
-          const filtered = allOptions.filter(project =>
-            project.toLowerCase().includes(searchTerm.toLowerCase())
-          );
-          resolve(filtered);
-        });
-      },
-      pageSize: this.config?.ui?.pageSize || 10,
-      default: configProjects[0] || 'Lonely Planet Website'
-    };
-
-    const answer = await inquirer.prompt([projectQuestion]);
-
-    // If user selected to add a new project
-    if (answer.project === ADD_NEW_OPTION) {
-      const newProjectQuestion = {
-        type: 'input',
-        name: 'newProject',
-        message: '   Enter new software capitalization project name:',
-        validate: (input) => {
-          if (!input || input.trim().length === 0) {
-            return 'Project name cannot be empty';
-          }
-          if (configProjects.includes(input.trim())) {
-            return 'This project already exists in the list';
-          }
-          return true;
-        }
-      };
-
-      const newProjectAnswer = await inquirer.prompt([newProjectQuestion]);
-      const newProject = newProjectAnswer.newProject.trim();
-
-      // Add to config and save
-      await this.addProjectToConfig(newProject);
-
-      console.log(chalk.green(`✓ Added "${newProject}" to your project list`));
-      return newProject;
-    }
-
-    return answer.project;
-  }
-
-  async addProjectToConfig(newProject) {
-    try {
-      // Update the in-memory config
-      if (!this.config.defaults.softwareCapitalizationProjects) {
-        this.config.defaults.softwareCapitalizationProjects = [];
-      }
-      this.config.defaults.softwareCapitalizationProjects.push(newProject);
-
-      // Save back to file
-      const configPath = path.join(process.cwd(), '.jirarc');
-      await fs.writeFile(configPath, JSON.stringify(this.config, null, 2));
-    } catch (error) {
-      console.warn(chalk.yellow(`Warning: Could not save new project to config: ${error.message}`));
-    }
-  }
-
   async showDryRun(ticketData) {
     console.log(chalk.yellow('\n🔍 DRY RUN MODE - No ticket will be created\n'));
 
@@ -380,6 +297,9 @@ class JiraTicketCLI {
     console.log(chalk.white('  Content-Type: application/json'));
     console.log(chalk.white('Payload:'));
     console.log(chalk.white(JSON.stringify(apiCall, null, 2)));
+
+    console.log(chalk.yellow('\n📝 Manual Step Required:'));
+    console.log(chalk.white('After creating the ticket, please manually update the "Software Capitalization Project" field in the Jira UI.'));
   }
 
   async createTicket(ticketData) {
@@ -393,6 +313,9 @@ class JiraTicketCLI {
       console.log(chalk.white(`Key: ${result.key}`));
       console.log(chalk.white(`ID: ${result.id}`));
       console.log(chalk.blue(`Link: ${this.config.jiraUrl}/browse/${result.key}`));
+
+      console.log(chalk.yellow('\n📝 Manual Step Required:'));
+      console.log(chalk.white('Please manually update the "Software Capitalization Project" field in the Jira UI.'));
 
     } catch (error) {
       spinner.fail('Failed to create ticket');
@@ -426,16 +349,6 @@ class JiraTicketCLI {
         console.log(chalk.white(`Components: ${components.slice(0, 3).join(', ')}${components.length > 3 ? '...' : ''}`));
       } catch (error) {
         componentSpinner.warn('Could not fetch components (will use defaults)');
-      }
-
-      // Test project fetching
-      const projectSpinner = ora('Testing software capitalization project access...').start();
-      try {
-        const projects = await this.jiraService.getSoftwareCapitalizationProjects(this.config);
-        projectSpinner.succeed(`Found ${projects.length} software capitalization projects`);
-        console.log(chalk.white(`Projects: ${projects.slice(0, 3).join(', ')}${projects.length > 3 ? '...' : ''}`));
-      } catch (error) {
-        projectSpinner.warn('Could not fetch projects (will use defaults)');
       }
 
     } catch (error) {

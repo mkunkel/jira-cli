@@ -8,14 +8,10 @@
   "defaults": {
     "workType": "Task",
     "priority": "Medium",
-    "ticketClassification": "Feature/Enhancement",
-    "softwareCapitalizationProjects": [
-      "Lonely Planet Website"
-    ]
+    "ticketClassification": "Feature/Enhancement"
   },
   "customFields": {
-    "softwareCapitalizationProject": "customfield_10801",
-    "ticketClassification": "customfield_10238"
+    "ticketClassification": "customfield_10002"
   },
   "ui": {
     "pageSize": 10

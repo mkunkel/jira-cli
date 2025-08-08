@@ -2,7 +2,16 @@
 
 ## Quick Start
 
-1. **Install dependencies:**
+1. **In  "defaults": {
+    "workType": "Task",
+    "priority": "Medium", 
+    "ticketClassification": "Feature/Enhancemen   ```json
+   {
+     "customFields": {
+       "ticketClassification": "customfield_10238"  
+     }
+   }
+   ```encies:**
    ```bash
    npm install
    ```

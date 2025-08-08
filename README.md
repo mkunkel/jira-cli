@@ -62,12 +62,6 @@ The CLI prompts for information in this exact order:
    - Bug, Feature/Enhancement, Operations, R&D, Risk, Tech Debt
    - Uses arrow key selection
 
-7. **Software Capitalization Project**
-   - Interactive selection from a predefined list in your configuration
-   - Type to filter, arrow keys to navigate
-   - Option to add new projects that get saved to your configuration
-   - Projects are managed locally in your `.jirarc` file
-
 ## Configuration
 
 ### Configuration File (`.jirarc`)
@@ -88,17 +82,9 @@ The CLI looks for configuration in this order:
   "defaults": {
     "workType": "Task",
     "priority": "Medium",
-    "ticketClassification": "Feature/Enhancement",
-    "softwareCapitalizationProjects": [
-      "Lonely Planet Website",
-      "Mobile App - iOS",
-      "Mobile App - Android",
-      "Backend Services",
-      "Data Platform"
-    ]
+    "ticketClassification": "Feature/Enhancement"
   },
   "customFields": {
-    "softwareCapitalizationProject": "customfield_10001",
     "ticketClassification": "customfield_10002"
   },
   "ui": {
@@ -116,36 +102,6 @@ The CLI looks for configuration in this order:
 ./bin/jira-ticket.js --list-fields    # List all Jira custom fields with IDs
 ./bin/jira-ticket.js --field-options <fieldId>  # Show options for a specific custom field
 ./bin/jira-ticket.js --help           # Show help information
-```
-
-## Managing Software Capitalization Projects
-
-Software capitalization projects are managed through your `.jirarc` configuration file as a list. You can:
-
-### View Current Projects
-Your projects are listed in the `defaults.softwareCapitalizationProjects` array in `.jirarc`.
-
-### Add Projects Interactively
-When prompted to select a software capitalization project:
-1. Type to filter existing projects OR
-2. Select "+ Add new software capitalization project..."
-3. Enter the new project name
-4. The new project is automatically added to your `.jirarc` file
-
-### Add Projects Manually
-Edit your `.jirarc` file directly:
-```json
-{
-  "defaults": {
-    "softwareCapitalizationProjects": [
-      "Lonely Planet Website",
-      "Mobile App - iOS",
-      "Mobile App - Android",
-      "Backend Services",
-      "Your New Project Name"
-    ]
-  }
-}
 ```
 
 ## Finding Custom Field IDs
@@ -198,6 +154,9 @@ After successful ticket creation:
 Key: DEMO-123
 ID: 10001
 Link: https://yourcompany.atlassian.net/browse/DEMO-123
+
+📝 Manual Step Required:
+Please manually update the "Software Capitalization Project" field in the Jira UI.
 ```
 
 ## Dry Run Example
@@ -212,8 +171,7 @@ Ticket Data:
   "description": "Users cannot log in",
   "components": ["Frontend", "Backend"],
   "priority": "High",
-  "ticketClassification": "Bug",
-  "softwareCapitalizationProject": "Backend Services"
+  "ticketClassification": "Bug"
 }
 
 Jira API Call that would be made:
@@ -235,6 +193,9 @@ Payload:
     ]
   }
 }
+
+📝 Manual Step Required:
+Please manually update the "Software Capitalization Project" field in the Jira UI.
 ```
 
 ## Installation Options
@@ -271,41 +232,22 @@ The CLI uses the Jira REST API v3 and supports:
 ## Customization
 
 ### Custom Fields
-To map the "Ticket Classification" and "Software Capitalization Project" to your Jira custom fields, update `src/jira-service.js`:
+To map the "Ticket Classification" to your Jira custom fields, you can either:
 
-```javascript
-### Custom Fields
-To map the "Ticket Classification" and "Software Capitalization Project" to your Jira custom fields, you can either:
-
-#### Option 1: Automatic Detection
-The CLI will automatically try to find custom fields with names containing:
-- "software", "capitalization", "capitalize" for Software Capitalization Project
-- The field options will be automatically fetched
-
-#### Option 2: Manual Configuration
+#### Option 1: Manual Configuration
 Add the custom field IDs to your `.jirarc` file:
 ```json
 {
   "customFields": {
-    "softwareCapitalizationProject": "customfield_10001",
     "ticketClassification": "customfield_10002"
   }
 }
 ```
 
 To find your custom field IDs:
-1. Go to Jira Settings → Issues → Custom fields
-2. Find your fields and note their IDs (usually like `customfield_10001`)
-3. Or use the test connection to see what fields are found automatically
-
-#### Option 3: Code Update
-Update the `buildCreateTicketPayload` method in `src/jira-service.js`:
-```javascript
-// Add these lines in buildCreateTicketPayload method
-payload.fields.customfield_10001 = ticketData.ticketClassification;
-payload.fields.customfield_10002 = ticketData.softwareCapitalizationProject;
-```
-```
+1. Use `./bin/jira-ticket.js --list-fields` to see all available fields
+2. Use `./bin/jira-ticket.js --field-options <fieldId>` to see field options
+3. Or go to Jira Settings → Issues → Custom fields
 
 ### Components
 Components are now automatically fetched from your Jira project using the `/rest/api/3/project/{projectKey}/components` endpoint. If the API call fails (due to permissions or network issues), the CLI will fall back to a default list of common components.
