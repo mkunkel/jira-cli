@@ -85,6 +85,9 @@ The CLI looks for configuration in this order:
     "priority": "Medium",
     "ticketClassification": "Feature/Enhancement",
     "softwareCapitalizationProject": "Lonely Planet Website"
+  },
+  "ui": {
+    "pageSize": 10
   }
 }
 ```
@@ -205,6 +208,24 @@ payload.fields.customfield_10002 = ticketData.softwareCapitalizationProject;
 
 ### Components
 Update the components list in `src/jira-cli.js` to match your project's components.
+
+### UI Configuration
+The `ui.pageSize` setting in `.jirarc` controls how many items are displayed in selection menus:
+- **Default**: 10 items
+- **Range**: 1-50 items (recommended: 5-15)
+- **Behavior**: If more items exist than the pageSize, you'll need to scroll to see them
+
+Example configurations:
+```json
+"ui": {
+  "pageSize": 5    // Show 5 items, scroll for more
+}
+```
+```json
+"ui": {
+  "pageSize": 15   // Show 15 items at once
+}
+```
 
 ## Troubleshooting
 

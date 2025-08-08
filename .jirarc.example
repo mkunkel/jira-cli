@@ -10,5 +10,8 @@
     "priority": "Medium",
     "ticketClassification": "Feature/Enhancement",
     "softwareCapitalizationProject": "Lonely Planet Website"
+  },
+  "ui": {
+    "pageSize": 10
   }
 }

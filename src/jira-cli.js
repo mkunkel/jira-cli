@@ -101,6 +101,9 @@ class JiraTicketCLI {
         priority: 'Medium',
         ticketClassification: 'Feature/Enhancement',
         softwareCapitalizationProject: 'Lonely Planet Website'
+      },
+      ui: {
+        pageSize: 10
       }
     };
 
@@ -110,6 +113,8 @@ class JiraTicketCLI {
   }
 
   async collectTicketData() {
+    const pageSize = this.config?.ui?.pageSize || 10;
+    
     const questions = [
       {
         type: 'list',
@@ -125,7 +130,9 @@ class JiraTicketCLI {
           'Deployment Task',
           'Feature'
         ],
-        default: this.config?.defaults?.workType || 'Task'
+        default: this.config?.defaults?.workType || 'Task',
+        loop: false,
+        pageSize: pageSize
       },
       {
         type: 'input',
@@ -154,7 +161,9 @@ class JiraTicketCLI {
           'Security',
           'Mobile',
           'DevOps'
-        ]
+        ],
+        loop: false,
+        pageSize: pageSize
       },
       {
         type: 'list',
@@ -168,7 +177,9 @@ class JiraTicketCLI {
           'Highest',
           'Blocker'
         ],
-        default: this.config?.defaults?.priority || 'Medium'
+        default: this.config?.defaults?.priority || 'Medium',
+        loop: false,
+        pageSize: pageSize
       },
       {
         type: 'list',
@@ -182,7 +193,9 @@ class JiraTicketCLI {
           'Risk',
           'Tech Debt'
         ],
-        default: this.config?.defaults?.ticketClassification || 'Feature/Enhancement'
+        default: this.config?.defaults?.ticketClassification || 'Feature/Enhancement',
+        loop: false,
+        pageSize: pageSize
       },
       {
         type: 'input',
