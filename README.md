@@ -49,7 +49,9 @@ The CLI prompts for information in this exact order:
    - Multi-line text input (opens default editor)
 
 4. **Components**
-   - Multi-select from predefined components
+   - Multi-select from components defined in your Jira project
+   - Automatically fetched from Jira API
+   - Falls back to default list if API call fails
    - Arrow key navigation with spacebar to select
 
 5. **Priority** (default: Medium)
@@ -207,7 +209,9 @@ payload.fields.customfield_10002 = ticketData.softwareCapitalizationProject;
 ```
 
 ### Components
-Update the components list in `src/jira-cli.js` to match your project's components.
+Components are now automatically fetched from your Jira project using the `/rest/api/3/project/{projectKey}/components` endpoint. If the API call fails (due to permissions or network issues), the CLI will fall back to a default list of common components.
+
+The components are sorted alphabetically for easier selection.
 
 ### UI Configuration
 The `ui.pageSize` setting in `.jirarc` controls how many items are displayed in selection menus:

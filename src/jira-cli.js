@@ -115,6 +115,28 @@ class JiraTicketCLI {
   async collectTicketData() {
     const pageSize = this.config?.ui?.pageSize || 10;
     
+    // Fetch components from Jira
+    const spinner = ora('Loading project components...').start();
+    let components;
+    try {
+      components = await this.jiraService.getProjectComponents(this.config);
+      spinner.succeed('Components loaded from Jira');
+    } catch (error) {
+      spinner.warn('Using default components (could not fetch from Jira)');
+      components = [
+        'Frontend',
+        'Backend',
+        'API',
+        'Database',
+        'Infrastructure',
+        'Documentation',
+        'Testing',
+        'Security',
+        'Mobile',
+        'DevOps'
+      ];
+    }
+    
     const questions = [
       {
         type: 'list',
@@ -150,18 +172,7 @@ class JiraTicketCLI {
         type: 'checkbox',
         name: 'components',
         message: '4) Select components:',
-        choices: [
-          'Frontend',
-          'Backend',
-          'API',
-          'Database',
-          'Infrastructure',
-          'Documentation',
-          'Testing',
-          'Security',
-          'Mobile',
-          'DevOps'
-        ],
+        choices: components,
         loop: false,
         pageSize: pageSize
       },
@@ -259,6 +270,16 @@ class JiraTicketCLI {
       console.log(chalk.white(`Account ID: ${userInfo.accountId}`));
       console.log(chalk.white(`Jira URL: ${this.config.jiraUrl}`));
       console.log(chalk.white(`Project Key: ${this.config.projectKey}`));
+      
+      // Test component fetching
+      const componentSpinner = ora('Testing component access...').start();
+      try {
+        const components = await this.jiraService.getProjectComponents(this.config);
+        componentSpinner.succeed(`Found ${components.length} components in project`);
+        console.log(chalk.white(`Components: ${components.join(', ')}`));
+      } catch (error) {
+        componentSpinner.warn('Could not fetch components (will use defaults)');
+      }
       
     } catch (error) {
       console.error(chalk.red('Connection failed:'), error.message);
