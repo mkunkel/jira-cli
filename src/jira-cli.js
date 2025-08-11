@@ -286,17 +286,42 @@ class JiraTicketCLI {
         const filterText = filter ? ` [Filter: "${filter}"]` : '';
         lines.push(chalk.cyan(message) + filterText);
 
-        // Show choices (no wrapping navigation)
-        const visibleChoices = filteredChoices.slice(0, pageSize);
+        // Calculate the visible window of choices
+        const totalChoices = filteredChoices.length;
+        let startIndex = 0;
+        let endIndex = Math.min(pageSize, totalChoices);
+
+        // If we have more choices than pageSize, calculate the window
+        if (totalChoices > pageSize) {
+          // Center the selected item in the visible window when possible
+          const halfPage = Math.floor(pageSize / 2);
+          startIndex = Math.max(0, selectedIndex - halfPage);
+          endIndex = Math.min(totalChoices, startIndex + pageSize);
+
+          // Adjust if we're near the end
+          if (endIndex - startIndex < pageSize && totalChoices >= pageSize) {
+            startIndex = Math.max(0, endIndex - pageSize);
+          }
+        }
+
+        const visibleChoices = filteredChoices.slice(startIndex, endIndex);
+
+        // Show choices with proper selection highlighting
         for (let i = 0; i < visibleChoices.length; i++) {
-          const isSelected = i === selectedIndex;
+          const actualIndex = startIndex + i;
+          const isSelected = actualIndex === selectedIndex;
           const prefix = isSelected ? chalk.cyan('▶ ') : '  ';
           const choice = isSelected ? chalk.inverse(visibleChoices[i]) : visibleChoices[i];
           lines.push(prefix + choice);
         }
 
-        if (filteredChoices.length > pageSize) {
-          lines.push(chalk.gray(`  ... and ${filteredChoices.length - pageSize} more`));
+        // Show pagination info if there are more items
+        if (totalChoices > pageSize) {
+          const currentPage = Math.floor(selectedIndex / pageSize) + 1;
+          const totalPages = Math.ceil(totalChoices / pageSize);
+          lines.push(chalk.gray(`  ... ${totalChoices} total (page ${currentPage}/${totalPages})`));
+        } else if (totalChoices > endIndex) {
+          lines.push(chalk.gray(`  ... and ${totalChoices - endIndex} more`));
         }
 
         // Write all lines
@@ -346,7 +371,7 @@ class JiraTicketCLI {
         }
 
         if (key.equals(Buffer.from([27, 91, 65]))) {
-          // Up arrow - no wrapping
+          // Up arrow - allow full navigation through all filtered results
           if (selectedIndex > 0) {
             selectedIndex--;
             updateDisplay();
@@ -355,8 +380,8 @@ class JiraTicketCLI {
         }
 
         if (key.equals(Buffer.from([27, 91, 66]))) {
-          // Down arrow - no wrapping
-          if (selectedIndex < Math.min(filteredChoices.length - 1, pageSize - 1)) {
+          // Down arrow - allow full navigation through all filtered results
+          if (selectedIndex < filteredChoices.length - 1) {
             selectedIndex++;
             updateDisplay();
           }
