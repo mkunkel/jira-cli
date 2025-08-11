@@ -108,7 +108,12 @@ class JiraService {
 
     try {
       const response = await this.client.get(`/rest/api/3/project/${config.projectKey}/components`);
-      return response.data.map(component => component.name).sort();
+      const componentNames = response.data.map(component => component.name);
+      
+      // Remove duplicates and sort
+      const uniqueComponents = [...new Set(componentNames)].sort();
+      
+      return uniqueComponents;
     } catch (error) {
       console.warn('Warning: Could not fetch components from Jira, using default list');
       // Return default components if API call fails

@@ -119,23 +119,21 @@ class JiraTicketCLI {
   async collectTicketData() {
     const pageSize = this.config?.ui?.pageSize || 10;
 
-        // Get project components
+    // Get project components
     let components;
     try {
       components = await this.jiraService.getProjectComponents(this.config);
-      // Ensure components is an array and fix any string concatenation issues
-      if (typeof components === 'string') {
-        components = components.split(',').map(c => c.trim());
-      }
+
       if (!Array.isArray(components)) {
-        throw new Error('Components must be an array');
+        throw new Error('Expected array from getProjectComponents');
       }
-      // Remove duplicates
-      components = [...new Set(components)];
+
     } catch (error) {
       console.error(chalk.yellow('Warning: Could not fetch components. Using defaults.'));
       components = ['backend', 'frontend', 'mobile', 'api'];
-    }    // Collect basic ticket information first
+    }
+
+    // Collect basic ticket information first
     const basicQuestions = [
       {
         type: 'list',
@@ -220,19 +218,10 @@ class JiraTicketCLI {
   }
 
   async selectComponents(availableComponents) {
-    // Convert string to array if needed and remove duplicates
-    let cleanComponents = availableComponents;
-    if (typeof availableComponents === 'string') {
-      cleanComponents = availableComponents.split(',').map(c => c.trim());
-    }
-    cleanComponents = [...new Set(cleanComponents)].sort();
-
-    console.log(chalk.blue('DEBUG: Clean components array:', cleanComponents.slice(0, 5), '... total:', cleanComponents.length));
-
     const selectedComponents = [];
 
     while (true) {
-      const remainingComponents = cleanComponents.filter(
+      const remainingComponents = availableComponents.filter(
         comp => !selectedComponents.includes(comp)
       );
 
@@ -241,41 +230,23 @@ class JiraTicketCLI {
         break;
       }
 
-      const componentQuestion = {
-        type: 'autocomplete',
-        name: 'component',
+      // Add "Finish" option to the choices
+      const choicesWithFinish = ['--- Finish selecting components ---', ...remainingComponents];
+
+      const result = await this.customAutocompletePrompt({
         message: selectedComponents.length === 0
-          ? '4) Select components (type to filter, Enter to select, empty Enter to finish):'
-          : `   Select another component (${selectedComponents.length} selected, empty Enter to finish):`,
-        source: (answersSoFar, input) => {
-          return new Promise((resolve) => {
-            const searchTerm = input || '';
-
-            // Filter based on search term
-            const filtered = remainingComponents.filter(comp =>
-              comp.toLowerCase().includes(searchTerm.toLowerCase())
-            );
-
-            // Add finish option for empty search
-            const options = [...filtered];
-            if (searchTerm === '') {
-              options.unshift('--- Finish selecting components ---');
-            }
-
-            resolve(options);
-          });
-        },
+          ? '4) Select components (type to filter, Enter to select):'
+          : `   Select another component (${selectedComponents.length} selected):`,
+        choices: choicesWithFinish,
         pageSize: this.config?.ui?.pageSize || 10
-      };
+      });
 
-      const answer = await inquirer.prompt([componentQuestion]);
-
-      if (answer.component === '--- Finish selecting components ---') {
+      if (result === '--- Finish selecting components ---') {
         break;
       }
 
-      selectedComponents.push(answer.component);
-      console.log(chalk.green(`✓ Selected: ${answer.component}`));
+      selectedComponents.push(result);
+      console.log(chalk.green(`✓ Selected: ${result}`));
     }
 
     if (selectedComponents.length === 0) {
@@ -283,6 +254,134 @@ class JiraTicketCLI {
     }
 
     return selectedComponents;
+  }
+
+  async customAutocompletePrompt({ message, choices, pageSize = 10 }) {
+    const readline = require('readline');
+
+    return new Promise((resolve) => {
+      let filter = '';
+      let selectedIndex = 0;
+      let filteredChoices = choices;
+      let isActive = true;
+
+      const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout
+      });
+
+      // Enable raw mode
+      process.stdin.setRawMode(true);
+
+      const updateDisplay = () => {
+        if (!isActive) return;
+
+        // Clear screen and move cursor to top
+        process.stdout.write('\x1B[2J\x1B[H');
+
+        // Build the display
+        const lines = [];
+
+        // Show message and current filter
+        const filterText = filter ? ` [Filter: "${filter}"]` : '';
+        lines.push(chalk.cyan(message) + filterText);
+
+        // Show choices (no wrapping navigation)
+        const visibleChoices = filteredChoices.slice(0, pageSize);
+        for (let i = 0; i < visibleChoices.length; i++) {
+          const isSelected = i === selectedIndex;
+          const prefix = isSelected ? chalk.cyan('▶ ') : '  ';
+          const choice = isSelected ? chalk.inverse(visibleChoices[i]) : visibleChoices[i];
+          lines.push(prefix + choice);
+        }
+
+        if (filteredChoices.length > pageSize) {
+          lines.push(chalk.gray(`  ... and ${filteredChoices.length - pageSize} more`));
+        }
+
+        // Write all lines
+        process.stdout.write(lines.join('\n'));
+      };
+
+      const filterChoices = () => {
+        filteredChoices = choices.filter(choice =>
+          choice.toLowerCase().includes(filter.toLowerCase())
+        );
+        selectedIndex = Math.min(selectedIndex, Math.max(0, filteredChoices.length - 1));
+      };
+
+      const cleanup = () => {
+        if (!isActive) return;
+        isActive = false;
+        process.stdin.setRawMode(false);
+        rl.close();
+
+        // Clear screen and move cursor to top, then add a newline
+        process.stdout.write('\x1B[2J\x1B[H\n');
+      };
+
+      // Initial display
+      filterChoices();
+      updateDisplay();
+
+      process.stdin.on('data', (key) => {
+        if (!isActive) return;
+
+        const keyCode = key[0];
+
+        if (key.equals(Buffer.from([3]))) {
+          // Ctrl+C - exit completely
+          cleanup();
+          process.exit(0);
+          return;
+        }
+
+        if (key.equals(Buffer.from([13]))) {
+          // Enter
+          if (filteredChoices.length > 0) {
+            cleanup();
+            resolve(filteredChoices[selectedIndex]);
+            return;
+          }
+        }
+
+        if (key.equals(Buffer.from([27, 91, 65]))) {
+          // Up arrow - no wrapping
+          if (selectedIndex > 0) {
+            selectedIndex--;
+            updateDisplay();
+          }
+          return;
+        }
+
+        if (key.equals(Buffer.from([27, 91, 66]))) {
+          // Down arrow - no wrapping
+          if (selectedIndex < Math.min(filteredChoices.length - 1, pageSize - 1)) {
+            selectedIndex++;
+            updateDisplay();
+          }
+          return;
+        }
+
+        if (keyCode === 127 || keyCode === 8) {
+          // Backspace
+          if (filter.length > 0) {
+            filter = filter.slice(0, -1);
+            filterChoices();
+            updateDisplay();
+          }
+          return;
+        }
+
+        if (keyCode >= 32 && keyCode <= 126) {
+          // Printable character
+          filter += key.toString();
+          filterChoices();
+          updateDisplay();
+          return;
+        }
+      });
+    });
   }
 
   async showDryRun(ticketData) {
