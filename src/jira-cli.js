@@ -265,6 +265,9 @@ class JiraTicketCLI {
       let filteredChoices = choices;
       let isActive = true;
 
+      // Hide cursor and clear screen initially
+      process.stdout.write('\x1B[?25l'); // Hide cursor
+
       const rl = readline.createInterface({
         input: process.stdin,
         output: process.stdout
@@ -273,32 +276,32 @@ class JiraTicketCLI {
       // Enable raw mode
       process.stdin.setRawMode(true);
 
-      const updateDisplay = () => {
+      const render = () => {
         if (!isActive) return;
 
-        // Clear screen and move cursor to top
+        // Clear entire screen and go to top
         process.stdout.write('\x1B[2J\x1B[H');
 
-        // Build the display
-        const lines = [];
+        // Re-print the CLI header and previous questions context
+        console.log(chalk.blue('🎫 Jira Ticket Creator\n'));
+        console.log(chalk.green('✓ Work type: Task'));
+        console.log(chalk.green('✓ Summary: [entered]'));
+        console.log(chalk.green('✓ Description: [entered]\n'));
 
-        // Show message and current filter
+        // Show current question with filter
         const filterText = filter ? ` [Filter: "${filter}"]` : '';
-        lines.push(chalk.cyan(message) + filterText);
+        console.log(chalk.cyan(message) + filterText);
 
-        // Calculate the visible window of choices
+        // Calculate visible window
         const totalChoices = filteredChoices.length;
         let startIndex = 0;
         let endIndex = Math.min(pageSize, totalChoices);
 
-        // If we have more choices than pageSize, calculate the window
         if (totalChoices > pageSize) {
-          // Center the selected item in the visible window when possible
           const halfPage = Math.floor(pageSize / 2);
           startIndex = Math.max(0, selectedIndex - halfPage);
           endIndex = Math.min(totalChoices, startIndex + pageSize);
 
-          // Adjust if we're near the end
           if (endIndex - startIndex < pageSize && totalChoices >= pageSize) {
             startIndex = Math.max(0, endIndex - pageSize);
           }
@@ -306,26 +309,23 @@ class JiraTicketCLI {
 
         const visibleChoices = filteredChoices.slice(startIndex, endIndex);
 
-        // Show choices with proper selection highlighting
+        // Show choices
         for (let i = 0; i < visibleChoices.length; i++) {
           const actualIndex = startIndex + i;
           const isSelected = actualIndex === selectedIndex;
           const prefix = isSelected ? chalk.cyan('▶ ') : '  ';
           const choice = isSelected ? chalk.inverse(visibleChoices[i]) : visibleChoices[i];
-          lines.push(prefix + choice);
+          console.log(prefix + choice);
         }
 
-        // Show pagination info if there are more items
+        // Show pagination
         if (totalChoices > pageSize) {
           const currentPage = Math.floor(selectedIndex / pageSize) + 1;
           const totalPages = Math.ceil(totalChoices / pageSize);
-          lines.push(chalk.gray(`  ... ${totalChoices} total (page ${currentPage}/${totalPages})`));
+          console.log(chalk.gray(`  ... ${totalChoices} total (page ${currentPage}/${totalPages})`));
         } else if (totalChoices > endIndex) {
-          lines.push(chalk.gray(`  ... and ${totalChoices - endIndex} more`));
+          console.log(chalk.gray(`  ... and ${totalChoices - endIndex} more`));
         }
-
-        // Write all lines
-        process.stdout.write(lines.join('\n'));
       };
 
       const filterChoices = () => {
@@ -341,13 +341,21 @@ class JiraTicketCLI {
         process.stdin.setRawMode(false);
         rl.close();
 
-        // Clear screen and move cursor to top, then add a newline
-        process.stdout.write('\x1B[2J\x1B[H\n');
+        // Show cursor and clear screen one final time to clean up
+        process.stdout.write('\x1B[?25h'); // Show cursor
+        process.stdout.write('\x1B[2J\x1B[H');
+
+        // Print just the essential context
+        console.log(chalk.blue('🎫 Jira Ticket Creator\n'));
+        console.log(chalk.green('✓ Work type: Task'));
+        console.log(chalk.green('✓ Summary: [entered]'));
+        console.log(chalk.green('✓ Description: [entered]'));
+        console.log(chalk.green('✓ Components: [selected]\n'));
       };
 
       // Initial display
       filterChoices();
-      updateDisplay();
+      render();
 
       process.stdin.on('data', (key) => {
         if (!isActive) return;
@@ -355,14 +363,12 @@ class JiraTicketCLI {
         const keyCode = key[0];
 
         if (key.equals(Buffer.from([3]))) {
-          // Ctrl+C - exit completely
           cleanup();
           process.exit(0);
           return;
         }
 
         if (key.equals(Buffer.from([13]))) {
-          // Enter
           if (filteredChoices.length > 0) {
             cleanup();
             resolve(filteredChoices[selectedIndex]);
@@ -371,38 +377,34 @@ class JiraTicketCLI {
         }
 
         if (key.equals(Buffer.from([27, 91, 65]))) {
-          // Up arrow - allow full navigation through all filtered results
           if (selectedIndex > 0) {
             selectedIndex--;
-            updateDisplay();
+            render();
           }
           return;
         }
 
         if (key.equals(Buffer.from([27, 91, 66]))) {
-          // Down arrow - allow full navigation through all filtered results
           if (selectedIndex < filteredChoices.length - 1) {
             selectedIndex++;
-            updateDisplay();
+            render();
           }
           return;
         }
 
         if (keyCode === 127 || keyCode === 8) {
-          // Backspace
           if (filter.length > 0) {
             filter = filter.slice(0, -1);
             filterChoices();
-            updateDisplay();
+            render();
           }
           return;
         }
 
         if (keyCode >= 32 && keyCode <= 126) {
-          // Printable character
           filter += key.toString();
           filterChoices();
-          updateDisplay();
+          render();
           return;
         }
       });
