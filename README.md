@@ -11,7 +11,8 @@ A command-line interface for creating Jira tickets with interactive prompts that
 - Dry run mode (`--dry-run` and `--dryrun`)
 - Multi-line description support
 - Component selection (multiple)
-- Custom field mapping for ticket classification and software capitalization
+- Custom field mapping for ticket classification
+- Component usage tracking (recently used components appear first)
 - Direct link to created ticket in output
 - Connection testing
 
@@ -52,7 +53,10 @@ The CLI prompts for information in this exact order:
    - Multi-select from components defined in your Jira project
    - Automatically fetched from Jira API
    - Falls back to default list if API call fails
-   - Arrow key navigation with spacebar to select
+   - Type to filter components by name
+   - Recently used components (within 30 days) appear at the top
+   - Usage tracking automatically updates after ticket creation
+   - Note: Arrow key navigation may wrap around in long lists
 
 5. **Priority** (default: Medium)
    - Lowest, Low, Medium, High, Highest, Blocker
@@ -89,7 +93,8 @@ The CLI looks for configuration in this order:
   },
   "ui": {
     "pageSize": 10
-  }
+  },
+  "componentUsage": {}
 }
 ```
 
@@ -250,20 +255,29 @@ To find your custom field IDs:
 3. Or go to Jira Settings → Issues → Custom fields
 
 ### Components
-Components are now automatically fetched from your Jira project using the `/rest/api/3/project/{projectKey}/components` endpoint. If the API call fails (due to permissions or network issues), the CLI will fall back to a default list of common components.
+Components are automatically fetched from your Jira project using the `/rest/api/3/project/{projectKey}/components` endpoint. If the API call fails (due to permissions or network issues), the CLI will fall back to a default list of common components.
 
-The components are sorted alphabetically for easier selection.
+#### Component Usage Tracking
+The CLI tracks which components you use and when:
+- **Recently Used**: Components used within the last 30 days appear at the top of the list
+- **Automatic Sorting**: Most recently used components appear first
+- **Visual Separator**: A separator line divides recently used from other components
+- **Persistent Storage**: Usage data is stored in your `.jirarc` file
+- **Privacy**: Usage tracking is local only - no data is sent to external services
+
+The components are sorted alphabetically within each group for easier selection.
 
 ### UI Configuration
 The `ui.pageSize` setting in `.jirarc` controls how many items are displayed in selection menus:
 - **Default**: 10 items
 - **Range**: 1-50 items (recommended: 5-15)
 - **Behavior**: If more items exist than the pageSize, you'll need to scroll to see them
+- **Tip**: Use a smaller pageSize (5-7) to reduce wrap-around effect in component selection
 
 Example configurations:
 ```json
 "ui": {
-  "pageSize": 5    // Show 5 items, scroll for more
+  "pageSize": 5    // Show 5 items, reduces wrap-around effect
 }
 ```
 ```json

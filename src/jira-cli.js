@@ -7,7 +7,6 @@ const chalk = require('chalk');
 const ora = require('ora');
 const JiraService = require('./jira-service');
 
-// Register the autocomplete prompt
 inquirer.registerPrompt('autocomplete', autocomplete);
 
 class JiraTicketCLI {
@@ -120,29 +119,23 @@ class JiraTicketCLI {
   async collectTicketData() {
     const pageSize = this.config?.ui?.pageSize || 10;
 
-    // Fetch components from Jira
-    const spinner = ora('Loading project components...').start();
+        // Get project components
     let components;
     try {
       components = await this.jiraService.getProjectComponents(this.config);
-      spinner.succeed('Components loaded from Jira');
+      // Ensure components is an array and fix any string concatenation issues
+      if (typeof components === 'string') {
+        components = components.split(',').map(c => c.trim());
+      }
+      if (!Array.isArray(components)) {
+        throw new Error('Components must be an array');
+      }
+      // Remove duplicates
+      components = [...new Set(components)];
     } catch (error) {
-      spinner.warn('Using default components (could not fetch from Jira)');
-      components = [
-        'Frontend',
-        'Backend',
-        'API',
-        'Database',
-        'Infrastructure',
-        'Documentation',
-        'Testing',
-        'Security',
-        'Mobile',
-        'DevOps'
-      ];
-    }
-
-    // Collect basic ticket information first
+      console.error(chalk.yellow('Warning: Could not fetch components. Using defaults.'));
+      components = ['backend', 'frontend', 'mobile', 'api'];
+    }    // Collect basic ticket information first
     const basicQuestions = [
       {
         type: 'list',
@@ -227,10 +220,19 @@ class JiraTicketCLI {
   }
 
   async selectComponents(availableComponents) {
+    // Convert string to array if needed and remove duplicates
+    let cleanComponents = availableComponents;
+    if (typeof availableComponents === 'string') {
+      cleanComponents = availableComponents.split(',').map(c => c.trim());
+    }
+    cleanComponents = [...new Set(cleanComponents)].sort();
+
+    console.log(chalk.blue('DEBUG: Clean components array:', cleanComponents.slice(0, 5), '... total:', cleanComponents.length));
+
     const selectedComponents = [];
 
     while (true) {
-      const remainingComponents = availableComponents.filter(
+      const remainingComponents = cleanComponents.filter(
         comp => !selectedComponents.includes(comp)
       );
 
@@ -248,14 +250,18 @@ class JiraTicketCLI {
         source: (answersSoFar, input) => {
           return new Promise((resolve) => {
             const searchTerm = input || '';
+
+            // Filter based on search term
             const filtered = remainingComponents.filter(comp =>
               comp.toLowerCase().includes(searchTerm.toLowerCase())
             );
-            // Add an option to finish selection
+
+            // Add finish option for empty search
             const options = [...filtered];
             if (searchTerm === '') {
               options.unshift('--- Finish selecting components ---');
             }
+
             resolve(options);
           });
         },
@@ -264,20 +270,16 @@ class JiraTicketCLI {
 
       const answer = await inquirer.prompt([componentQuestion]);
 
-      if (!answer.component || answer.component === '--- Finish selecting components ---') {
+      if (answer.component === '--- Finish selecting components ---') {
         break;
       }
 
       selectedComponents.push(answer.component);
-      console.log(chalk.green(`   ✓ Added: ${answer.component}`));
-
-      if (selectedComponents.length > 0) {
-        console.log(chalk.cyan(`   Selected (${selectedComponents.length}): ${selectedComponents.join(', ')}`));
-      }
+      console.log(chalk.green(`✓ Selected: ${answer.component}`));
     }
 
     if (selectedComponents.length === 0) {
-      console.log(chalk.yellow('   No components selected.'));
+      console.log(chalk.yellow('No components selected. Proceeding without components.'));
     }
 
     return selectedComponents;
