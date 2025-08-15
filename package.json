@@ -4,7 +4,7 @@
   "description": "CLI application for creating Jira tickets with interactive prompts",
   "main": "index.js",
   "bin": {
-    "jira-ticket": "./bin/jira-ticket.js"
+    "jira": "./bin/jira-ticket.js"
   },
   "scripts": {
     "start": "node bin/jira-ticket.js",

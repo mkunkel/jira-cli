@@ -35,6 +35,48 @@ chmod +x bin/jira-ticket.js
 ./bin/jira-ticket.js --dry-run
 ```
 
+## Global Installation
+
+To make this CLI available globally as the `jira` command:
+
+### Option 1: Using npm link (Recommended)
+```bash
+# From the project directory
+npm link
+
+# Now you can use 'jira' from anywhere
+jira --help
+jira --dry-run
+```
+
+**Note**: The `package.json` bin field is configured to create the `jira` command.
+
+### Option 2: Manual symlink
+```bash
+# Create a symlink in your PATH (adjust paths as needed)
+sudo ln -s /path/to/this/project/bin/jira-ticket.js /usr/local/bin/jira
+
+# Make sure it's executable
+chmod +x /usr/local/bin/jira
+
+# Now you can use 'jira' from anywhere
+jira --help
+```
+
+### Option 3: Add to PATH
+```bash
+# Add the bin directory to your PATH in ~/.bashrc or ~/.zshrc
+export PATH="$PATH:/path/to/this/project/bin"
+
+# Reload your shell or source the file
+source ~/.bashrc
+
+# Create an alias for the shorter command name
+alias jira='/path/to/this/project/bin/jira-ticket.js'
+```
+
+**Note**: After global installation, you can use `jira` instead of `./bin/jira-ticket.js` from any directory.
+
 ## Prompt Order (As Specified)
 
 The CLI prompts for information in this exact order:
