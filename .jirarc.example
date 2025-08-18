@@ -1,6 +1,6 @@
 {
-  "projectKey": "LPWEB",
-  "jiraUrl": "https://redventures.atlassian.net",
+  "projectKey": "YOUR_PROJECT_KEY",
+  "jiraUrl": "https://yourcompany.atlassian.net",
   "auth": {
     "email": "your.email@company.com",
     "apiToken": "your_api_token_here"
@@ -10,8 +10,21 @@
     "priority": "Medium",
     "ticketClassification": "Feature/Enhancement"
   },
+  "workTypes": [
+    "Task",
+    "Bug",
+    "Epic",
+    "Incident",
+    "Story",
+    "Initiative",
+    "Deployment Task",
+    "Feature"
+  ],
   "customFields": {
-    "ticketClassification": "customfield_10002"
+    "ticketClassification": "customfield_10238"
+  },
+  "editor": {
+    "command": null
   },
   "ui": {
     "pageSize": 10

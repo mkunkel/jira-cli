@@ -22,6 +22,9 @@ class JiraTicketCLI {
       // Load configuration
       await this.loadConfig();
 
+      // Validate configuration
+      this.validateConfiguration();
+
       // Validate token before proceeding
       await this.validateToken();
 
@@ -108,9 +111,26 @@ class JiraTicketCLI {
         priority: 'Medium',
         ticketClassification: 'Feature/Enhancement'
       },
+      workTypes: [
+        'Task',
+        'Bug',
+        'Epic',
+        'Incident',
+        'Story',
+        'Initiative',
+        'Deployment Task',
+        'Feature'
+      ],
+      customFields: {
+        ticketClassification: null
+      },
+      editor: {
+        command: process.env.EDITOR
+      },
       ui: {
         pageSize: 10
-      }
+      },
+      componentUsage: {}
     };
 
     const configPath = path.join(os.homedir(), '.jirarc');
@@ -118,28 +138,47 @@ class JiraTicketCLI {
     console.log(chalk.green(`✓ Configuration saved to: ${configPath}\n`));
   }
 
+  validateConfiguration() {
+    // Validate that default workType is in the workTypes list
+    if (this.config?.defaults?.workType && this.config?.workTypes) {
+      if (!this.config.workTypes.includes(this.config.defaults.workType)) {
+        console.warn(chalk.yellow(`Warning: Default workType "${this.config.defaults.workType}" is not in the workTypes list`));
+      }
+    }
+  }
+
   async validateToken() {
-    const spinner = ora('Validating API token...').start();
+    const spinner = ora('Validating API access...').start();
 
     try {
       // Test the token by making a simple API call
       await this.jiraService.testConnection(this.config);
-      spinner.succeed('API token is valid');
+      spinner.text = 'Testing project access...';
+
+      // Test project access by fetching components
+      await this.jiraService.getProjectComponents(this.config);
+      spinner.succeed('API token and project access validated');
     } catch (error) {
-      spinner.fail('API token validation failed');
+      spinner.fail('API validation failed');
 
       // Provide helpful error messages based on the error type
-      if (error.message.includes('401') || error.message.includes('unauthorized')) {
+      if (error.message.includes('401') || error.message.includes('unauthorized') || error.message.includes('invalid or expired')) {
         throw new Error(
           'API token has expired or is invalid.\n' +
           '  → Generate a new token at: https://id.atlassian.com/manage-profile/security/api-tokens\n' +
           '  → Update your .jirarc file with the new token'
         );
-      } else if (error.message.includes('403') || error.message.includes('forbidden')) {
+      } else if (error.message.includes('403') || error.message.includes('Access denied')) {
         throw new Error(
           'API token lacks sufficient permissions.\n' +
           '  → Ensure your Jira account has permission to create tickets\n' +
           '  → Check if your account has access to the project: ' + this.config.projectKey
+        );
+      } else if (error.message.includes('404') || error.message.includes('not found')) {
+        throw new Error(
+          'Project not found.\n' +
+          '  → Verify the project key in .jirarc: ' + this.config.projectKey + '\n' +
+          '  → Ensure the project exists and you have access to it'
         );
       } else if (error.message.includes('Network error') || error.message.includes('ENOTFOUND')) {
         throw new Error(
@@ -149,7 +188,7 @@ class JiraTicketCLI {
         );
       } else {
         throw new Error(
-          'Token validation failed: ' + error.message + '\n' +
+          'API validation failed: ' + error.message + '\n' +
           '  → Run `jira --test-connection` to test your configuration'
         );
       }
@@ -160,18 +199,7 @@ class JiraTicketCLI {
     const pageSize = this.config?.ui?.pageSize || 10;
 
     // Get project components
-    let components;
-    try {
-      components = await this.jiraService.getProjectComponents(this.config);
-
-      if (!Array.isArray(components)) {
-        throw new Error('Expected array from getProjectComponents');
-      }
-
-    } catch (error) {
-      console.error(chalk.yellow('Warning: Could not fetch components. Using defaults.'));
-      components = ['backend', 'frontend', 'mobile', 'api'];
-    }
+    const components = await this.jiraService.getProjectComponents(this.config);
 
     // Collect basic ticket information first
     const basicQuestions = [
@@ -179,7 +207,7 @@ class JiraTicketCLI {
         type: 'list',
         name: 'workType',
         message: '1) Select work type:',
-        choices: [
+        choices: this.config?.workTypes || [
           'Task',
           'Bug',
           'Epic',
@@ -202,8 +230,11 @@ class JiraTicketCLI {
       {
         type: 'editor',
         name: 'description',
-        message: '3) Enter ticket description (this will open your default editor):',
-        validate: input => input.length > 0 || 'Description is required'
+        message: this.config?.editor?.command
+          ? `3) Enter ticket description (will open ${this.config.editor.command}):`
+          : '3) Enter ticket description (this will open your default editor):',
+        validate: input => input.length > 0 || 'Description is required',
+        ...(this.config?.editor?.command && { editor: this.config.editor.command })
       }
     ];
 
@@ -511,13 +542,9 @@ class JiraTicketCLI {
 
       // Test component fetching
       const componentSpinner = ora('Testing component access...').start();
-      try {
-        const components = await this.jiraService.getProjectComponents(this.config);
-        componentSpinner.succeed(`Found ${components.length} components in project`);
-        console.log(chalk.white(`Components: ${components.slice(0, 3).join(', ')}${components.length > 3 ? '...' : ''}`));
-      } catch (error) {
-        componentSpinner.warn('Could not fetch components (will use defaults)');
-      }
+      const components = await this.jiraService.getProjectComponents(this.config);
+      componentSpinner.succeed(`Found ${components.length} components in project`);
+      console.log(chalk.white(`Components: ${components.slice(0, 3).join(', ')}${components.length > 3 ? '...' : ''}`));
 
     } catch (error) {
       console.error(chalk.red('Connection failed:'), error.message);

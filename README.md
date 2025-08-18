@@ -82,7 +82,8 @@ alias jira='/path/to/this/project/bin/jira-ticket.js'
 The CLI prompts for information in this exact order:
 
 1. **Work type** (default: Task)
-   - Task, Bug, Epic, Incident, Story, Initiative, Deployment Task, Feature
+   - Configurable list via `workTypes` in `.jirarc`
+   - Default options: Task, Bug, Epic, Incident, Story, Initiative, Deployment Task, Feature
    - Uses arrow key selection
 
 2. **Summary**
@@ -93,8 +94,7 @@ The CLI prompts for information in this exact order:
 
 4. **Components**
    - Multi-select from components defined in your Jira project
-   - Automatically fetched from Jira API
-   - Falls back to default list if API call fails
+   - Automatically fetched from Jira API at startup
    - Type to filter components by name
    - Recently used components (within 30 days) appear at the top
    - Usage tracking automatically updates after ticket creation
@@ -130,8 +130,21 @@ The CLI looks for configuration in this order:
     "priority": "Medium",
     "ticketClassification": "Feature/Enhancement"
   },
+  "workTypes": [
+    "Task",
+    "Bug",
+    "Epic",
+    "Incident",
+    "Story",
+    "Initiative",
+    "Deployment Task",
+    "Feature"
+  ],
   "customFields": {
     "ticketClassification": "customfield_10002"
+  },
+  "editor": {
+    "command": null
   },
   "ui": {
     "pageSize": 10
@@ -297,7 +310,7 @@ To find your custom field IDs:
 3. Or go to Jira Settings → Issues → Custom fields
 
 ### Components
-Components are automatically fetched from your Jira project using the `/rest/api/3/project/{projectKey}/components` endpoint. If the API call fails (due to permissions or network issues), the CLI will fall back to a default list of common components.
+Components are automatically fetched from your Jira project using the `/rest/api/3/project/{projectKey}/components` endpoint. The CLI validates project access at startup and will exit with an error if components cannot be fetched.
 
 #### Component Usage Tracking
 The CLI tracks which components you use and when:
@@ -326,6 +339,54 @@ Example configurations:
 "ui": {
   "pageSize": 15   // Show 15 items at once
 }
+```
+
+### Editor Configuration
+The `editor.command` setting controls which editor opens for ticket descriptions:
+- **Default**: Uses `$EDITOR` environment variable when `command` is `null`
+- **Behavior**: Opens when you reach the description step (step 3)
+- **Format**: Command that waits for file completion (e.g., "code --wait", "vim")
+- **If not configured**: Automatically uses `$EDITOR` or system default editor
+
+Example configurations:
+```json
+"editor": {
+  "command": "code --wait"    // VS Code (waits for file to close)
+}
+```
+```json
+"editor": {
+  "command": "vim"           // Vim editor
+}
+```
+```json
+"editor": {
+  "command": null            // Use $EDITOR or system default
+}
+```
+
+### Work Type Configuration
+The `workTypes` setting controls which issue types are available in the work type selection:
+- **Default**: Standard Jira issue types (Task, Bug, Epic, etc.)
+- **Customizable**: Add or remove options to match your Jira project setup
+- **Validation**: The `defaults.workType` must be one of the options in `workTypes`
+
+Example configurations:
+```json
+"workTypes": [
+  "Task",
+  "Bug",
+  "Story",
+  "Epic"
+]
+```
+```json
+"workTypes": [
+  "Feature Request",
+  "Bug Report",
+  "Technical Debt",
+  "Documentation"
+]
 ```
 
 ## Troubleshooting

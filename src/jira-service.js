@@ -1,4 +1,5 @@
 const axios = require('axios');
+const chalk = require('chalk');
 
 class JiraService {
   constructor() {
@@ -59,6 +60,11 @@ class JiraService {
     // Add custom fields based on configuration
     if (config.customFields?.ticketClassification && ticketData.ticketClassification) {
       payload.fields[config.customFields.ticketClassification] = ticketData.ticketClassification;
+    } else if (ticketData.ticketClassification && !config.customFields?.ticketClassification) {
+      console.log(chalk.yellow('\n⚠️  Warning: Ticket classification selected but no custom field configured.'));
+      console.log(chalk.white('   To enable ticket classification, add the field ID to your .jirarc:'));
+      console.log(chalk.white('   "customFields": { "ticketClassification": "customfield_XXXXX" }'));
+      console.log(chalk.white('   Use --list-fields to find your field ID.\n'));
     }
 
     return payload;
@@ -115,20 +121,15 @@ class JiraService {
 
       return uniqueComponents;
     } catch (error) {
-      console.warn('Warning: Could not fetch components from Jira, using default list');
-      // Return default components if API call fails
-      return [
-        'Frontend',
-        'Backend',
-        'API',
-        'Database',
-        'Infrastructure',
-        'Documentation',
-        'Testing',
-        'Security',
-        'Mobile',
-        'DevOps'
-      ];
+      if (error.response?.status === 404) {
+        throw new Error(`Project '${config.projectKey}' not found. Please check your project key in .jirarc`);
+      } else if (error.response?.status === 403) {
+        throw new Error(`Access denied to project '${config.projectKey}'. Please check your permissions.`);
+      } else if (error.response?.status === 401) {
+        throw new Error('API token is invalid or expired. Please update your token in .jirarc');
+      } else {
+        throw new Error(`Failed to fetch components from project '${config.projectKey}': ${error.message}`);
+      }
     }
   }
 
