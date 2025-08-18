@@ -29,5 +29,9 @@
   "ui": {
     "pageSize": 10
   },
+  "componentTracking": {
+    "recentDays": 30,
+    "enabled": true
+  },
   "componentUsage": {}
 }

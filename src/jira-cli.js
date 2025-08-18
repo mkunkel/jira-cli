@@ -29,7 +29,7 @@ class JiraTicketCLI {
       await this.validateToken();
 
       // Collect ticket information
-      const ticketData = await this.collectTicketData();
+      const ticketData = await this.collectTicketData(isDryRun);
 
       // Create the ticket or show dry run
       if (isDryRun) {
@@ -130,6 +130,10 @@ class JiraTicketCLI {
       ui: {
         pageSize: 10
       },
+      componentTracking: {
+        recentDays: 30,
+        enabled: true
+      },
       componentUsage: {}
     };
 
@@ -143,6 +147,111 @@ class JiraTicketCLI {
     if (this.config?.defaults?.workType && this.config?.workTypes) {
       if (!this.config.workTypes.includes(this.config.defaults.workType)) {
         console.warn(chalk.yellow(`Warning: Default workType "${this.config.defaults.workType}" is not in the workTypes list`));
+      }
+    }
+  }
+
+  cleanupComponentUsage(availableComponents) {
+    if (!this.config?.componentTracking?.enabled || !this.config?.componentUsage) {
+      return;
+    }
+
+    const recentDays = this.config.componentTracking?.recentDays || 30;
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - recentDays);
+
+    // Remove components that no longer exist in the project
+    for (const componentName of Object.keys(this.config.componentUsage)) {
+      if (!availableComponents.includes(componentName)) {
+        delete this.config.componentUsage[componentName];
+      }
+    }
+
+    // Remove components older than the recent days threshold
+    for (const [componentName, usage] of Object.entries(this.config.componentUsage)) {
+      const lastUsedDate = new Date(usage.lastUsed);
+      if (lastUsedDate < cutoffDate) {
+        delete this.config.componentUsage[componentName];
+      }
+    }
+  }
+
+  organizeComponents(availableComponents, selectedComponents = []) {
+    if (!this.config?.componentTracking?.enabled) {
+      // If tracking disabled, return all available components alphabetically
+      return {
+        recentComponents: [],
+        otherComponents: availableComponents
+          .filter(comp => !selectedComponents.includes(comp))
+          .sort()
+      };
+    }
+
+    const recentDays = this.config.componentTracking?.recentDays || 30;
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - recentDays);
+
+    const recentComponents = [];
+    const otherComponents = [];
+
+    for (const component of availableComponents) {
+      // Skip already selected components
+      if (selectedComponents.includes(component)) {
+        continue;
+      }
+
+      const usage = this.config.componentUsage?.[component];
+      if (usage && new Date(usage.lastUsed) >= cutoffDate) {
+        recentComponents.push(component);
+      } else {
+        otherComponents.push(component);
+      }
+    }
+
+    return {
+      recentComponents: recentComponents.sort(),
+      otherComponents: otherComponents.sort()
+    };
+  }
+
+  updateComponentUsage(componentName) {
+    if (!this.config?.componentTracking?.enabled) {
+      return;
+    }
+
+    if (!this.config.componentUsage) {
+      this.config.componentUsage = {};
+    }
+
+    const now = new Date().toISOString();
+    const existing = this.config.componentUsage[componentName];
+
+    this.config.componentUsage[componentName] = {
+      lastUsed: now,
+      count: existing ? existing.count + 1 : 1
+    };
+  }
+
+  async saveComponentUsage() {
+    if (!this.config?.componentTracking?.enabled) {
+      return;
+    }
+
+    // Find the config file path (same logic as loadConfig)
+    const configPaths = [
+      path.join(process.cwd(), '.jirarc'),
+      path.join(os.homedir(), '.jirarc'),
+      path.join(__dirname, '..', '.jirarc')
+    ];
+
+    for (const configPath of configPaths) {
+      if (await fs.pathExists(configPath)) {
+        try {
+          await fs.writeFile(configPath, JSON.stringify(this.config, null, 2));
+          return;
+        } catch (error) {
+          console.warn(chalk.yellow(`Warning: Could not save component usage to ${configPath}`));
+        }
       }
     }
   }
@@ -195,11 +304,14 @@ class JiraTicketCLI {
     }
   }
 
-  async collectTicketData() {
+  async collectTicketData(isDryRun = false) {
     const pageSize = this.config?.ui?.pageSize || 10;
 
     // Get project components
     const components = await this.jiraService.getProjectComponents(this.config);
+
+    // Clean up component usage data
+    this.cleanupComponentUsage(components);
 
     // Collect basic ticket information first
     const basicQuestions = [
@@ -241,7 +353,7 @@ class JiraTicketCLI {
     const basicAnswers = await inquirer.prompt(basicQuestions);
 
     // Handle components selection with autocomplete
-    const selectedComponents = await this.selectComponents(components);
+    const selectedComponents = await this.selectComponents(components, isDryRun);
 
     // Continue with remaining questions
     const remainingQuestions = [
@@ -284,32 +396,46 @@ class JiraTicketCLI {
     return {
       ...basicAnswers,
       components: selectedComponents,
+      availableComponents: components,  // Include for dry run simulation
       ...remainingAnswers
     };
   }
 
-  async selectComponents(availableComponents) {
+  async selectComponents(availableComponents, isDryRun = false) {
     const selectedComponents = [];
 
     while (true) {
-      const remainingComponents = availableComponents.filter(
-        comp => !selectedComponents.includes(comp)
-      );
+      // Organize components into recently used and other
+      const { recentComponents, otherComponents } = this.organizeComponents(availableComponents, selectedComponents);
 
-      if (remainingComponents.length === 0) {
+      if (recentComponents.length === 0 && otherComponents.length === 0) {
         console.log(chalk.yellow('All components have been selected.'));
         break;
       }
 
-      // Add "Finish" option to the choices
-      const choicesWithFinish = ['--- Finish selecting components ---', ...remainingComponents];
+      // Build choices list with proper layout
+      const choices = ['--- Finish selecting components ---'];
+
+      // Add recently used components
+      if (recentComponents.length > 0) {
+        choices.push(...recentComponents);
+      }
+
+      // Add "Other Components" header and components
+      if (otherComponents.length > 0) {
+        if (recentComponents.length > 0) {
+          choices.push('--- Other Components ---');
+        }
+        choices.push(...otherComponents);
+      }
 
       const result = await this.customAutocompletePrompt({
         message: selectedComponents.length === 0
           ? '4) Select components (type to filter, Enter to select):'
           : `   Select another component (${selectedComponents.length} selected):`,
-        choices: choicesWithFinish,
-        pageSize: this.config?.ui?.pageSize || 10
+        choices: choices,
+        pageSize: this.config?.ui?.pageSize || 10,
+        nonSelectableItems: ['--- Other Components ---']
       });
 
       if (result === '--- Finish selecting components ---') {
@@ -317,6 +443,9 @@ class JiraTicketCLI {
       }
 
       selectedComponents.push(result);
+      if (!isDryRun) {
+        this.updateComponentUsage(result);
+      }
       console.log(chalk.green(`✓ Selected: ${result}`));
     }
 
@@ -327,7 +456,7 @@ class JiraTicketCLI {
     return selectedComponents;
   }
 
-  async customAutocompletePrompt({ message, choices, pageSize = 10 }) {
+  async customAutocompletePrompt({ message, choices, pageSize = 10, nonSelectableItems = [] }) {
     const readline = require('readline');
 
     return new Promise((resolve) => {
@@ -399,11 +528,41 @@ class JiraTicketCLI {
         }
       };
 
+      const findNextSelectableIndex = (currentIndex, direction) => {
+        const len = filteredChoices.length;
+        let newIndex = currentIndex;
+
+        for (let i = 0; i < len; i++) {
+          newIndex = direction > 0
+            ? (newIndex + 1) % len
+            : (newIndex - 1 + len) % len;
+
+          if (!nonSelectableItems.includes(filteredChoices[newIndex])) {
+            return newIndex;
+          }
+        }
+        return currentIndex; // If no selectable items found, stay at current
+      };
+
       const filterChoices = () => {
         filteredChoices = choices.filter(choice =>
           choice.toLowerCase().includes(filter.toLowerCase())
         );
+
+        // Remove duplicates while preserving order
+        const seen = new Set();
+        filteredChoices = filteredChoices.filter(choice => {
+          if (seen.has(choice)) return false;
+          seen.add(choice);
+          return true;
+        });
+
         selectedIndex = Math.min(selectedIndex, Math.max(0, filteredChoices.length - 1));
+
+        // Ensure we start on a selectable item
+        if (filteredChoices.length > 0 && nonSelectableItems.includes(filteredChoices[selectedIndex])) {
+          selectedIndex = findNextSelectableIndex(selectedIndex, 1);
+        }
       };
 
       const cleanup = () => {
@@ -441,23 +600,29 @@ class JiraTicketCLI {
 
         if (key.equals(Buffer.from([13]))) {
           if (filteredChoices.length > 0) {
-            cleanup();
-            resolve(filteredChoices[selectedIndex]);
-            return;
+            const selectedChoice = filteredChoices[selectedIndex];
+            // Don't allow selection of non-selectable items
+            if (!nonSelectableItems.includes(selectedChoice)) {
+              cleanup();
+              resolve(selectedChoice);
+              return;
+            }
           }
         }
 
         if (key.equals(Buffer.from([27, 91, 65]))) {
-          if (selectedIndex > 0) {
-            selectedIndex--;
+          const newIndex = findNextSelectableIndex(selectedIndex, -1);
+          if (newIndex !== selectedIndex) {
+            selectedIndex = newIndex;
             render();
           }
           return;
         }
 
         if (key.equals(Buffer.from([27, 91, 66]))) {
-          if (selectedIndex < filteredChoices.length - 1) {
-            selectedIndex++;
+          const newIndex = findNextSelectableIndex(selectedIndex, 1);
+          if (newIndex !== selectedIndex) {
+            selectedIndex = newIndex;
             render();
           }
           return;
@@ -482,6 +647,63 @@ class JiraTicketCLI {
     });
   }
 
+  simulateAllConfigChanges(selectedComponents, availableComponents) {
+    // Create a deep copy of the current config
+    const simulatedConfig = JSON.parse(JSON.stringify(this.config));
+    let hasChanges = false;
+
+    // 1. Simulate cleanup (regardless of enabled state - show what would happen if enabled)
+    if (simulatedConfig.componentUsage) {
+      const originalUsageCount = Object.keys(simulatedConfig.componentUsage).length;
+
+      // Remove components that no longer exist in the project
+      for (const componentName of Object.keys(simulatedConfig.componentUsage)) {
+        if (!availableComponents.includes(componentName)) {
+          delete simulatedConfig.componentUsage[componentName];
+          hasChanges = true;
+        }
+      }
+
+      // Remove components older than the recent days threshold
+      const recentDays = simulatedConfig.componentTracking?.recentDays || 30;
+      const cutoffDate = new Date();
+      cutoffDate.setDate(cutoffDate.getDate() - recentDays);
+
+      for (const [componentName, usage] of Object.entries(simulatedConfig.componentUsage)) {
+        const lastUsedDate = new Date(usage.lastUsed);
+        if (lastUsedDate < cutoffDate) {
+          delete simulatedConfig.componentUsage[componentName];
+          hasChanges = true;
+        }
+      }
+
+      // Check if cleanup removed any items
+      const newUsageCount = Object.keys(simulatedConfig.componentUsage).length;
+      if (newUsageCount !== originalUsageCount) {
+        hasChanges = true;
+      }
+    }
+
+    // 2. Simulate component usage updates (if components were selected)
+    if (selectedComponents && selectedComponents.length > 0) {
+      if (!simulatedConfig.componentUsage) {
+        simulatedConfig.componentUsage = {};
+      }
+
+      const now = new Date().toISOString();
+      for (const componentName of selectedComponents) {
+        const existing = simulatedConfig.componentUsage[componentName];
+        simulatedConfig.componentUsage[componentName] = {
+          lastUsed: now,
+          count: existing ? existing.count + 1 : 1
+        };
+        hasChanges = true;
+      }
+    }
+
+    return hasChanges ? simulatedConfig : null;
+  }
+
   async showDryRun(ticketData) {
     console.log(chalk.yellow('\n🔍 DRY RUN MODE - No ticket will be created\n'));
 
@@ -497,6 +719,61 @@ class JiraTicketCLI {
     console.log(chalk.white('Payload:'));
     console.log(chalk.white(JSON.stringify(apiCall, null, 2)));
 
+        // Show what changes would be made to .jirarc
+    const simulatedConfig = this.simulateAllConfigChanges(ticketData.components, ticketData.availableComponents);
+
+    console.log(chalk.cyan('\n.jirarc changes that would be made:'));
+
+    if (simulatedConfig) {
+      // Show the current state
+      console.log(chalk.white('Before:'));
+      console.log(chalk.gray(JSON.stringify({
+        componentTracking: this.config.componentTracking || {},
+        componentUsage: this.config.componentUsage || {}
+      }, null, 2)));
+
+      // Show the simulated state
+      console.log(chalk.white('\nAfter:'));
+      console.log(chalk.white(JSON.stringify({
+        componentTracking: simulatedConfig.componentTracking || {},
+        componentUsage: simulatedConfig.componentUsage || {}
+      }, null, 2)));
+
+      // Show summary of changes
+      const changes = [];
+
+      // Check for cleanup changes
+      const originalUsageKeys = Object.keys(this.config.componentUsage || {});
+      const simulatedUsageKeys = Object.keys(simulatedConfig.componentUsage || {});
+      const removedComponents = originalUsageKeys.filter(key => !simulatedUsageKeys.includes(key));
+
+      if (removedComponents.length > 0) {
+        changes.push(`Removed old/non-existent components: ${removedComponents.join(', ')}`);
+      }
+
+      // Check for new/updated components
+      if (ticketData.components && ticketData.components.length > 0) {
+        changes.push(`Updated usage for: ${ticketData.components.join(', ')}`);
+      }
+
+      if (changes.length > 0) {
+        console.log(chalk.white('\nChanges summary:'));
+        changes.forEach(change => console.log(chalk.white(`  • ${change}`)));
+      }
+
+      // Show tracking status
+      if (this.config?.componentTracking?.enabled === false) {
+        console.log(chalk.yellow('\nNote: Component tracking is currently disabled. Enable it to apply these changes.'));
+      }
+    } else {
+      console.log(chalk.gray('No changes would be made to .jirarc'));
+      if (!ticketData.components || ticketData.components.length === 0) {
+        console.log(chalk.gray('(No components selected)'));
+      } else if (this.config?.componentTracking?.enabled === false) {
+        console.log(chalk.gray('(Component tracking is disabled)'));
+      }
+    }
+
     console.log(chalk.yellow('\n📝 Manual Step Required:'));
     console.log(chalk.white('After creating the ticket, please manually update the "Software Capitalization Project" field in the Jira UI.'));
   }
@@ -507,6 +784,9 @@ class JiraTicketCLI {
     try {
       const result = await this.jiraService.createTicket(ticketData, this.config);
       spinner.succeed('Ticket created successfully!');
+
+      // Save component usage after successful ticket creation
+      await this.saveComponentUsage();
 
       console.log(chalk.green('\n✅ Ticket Created:'));
       console.log(chalk.white(`Key: ${result.key}`));

@@ -20,12 +20,14 @@ class JiraService {
   }
 
   buildCreateTicketPayload(ticketData, config) {
+    // Remove availableComponents if present (used only for dry run simulation)
+    const { availableComponents, ...cleanTicketData } = ticketData;
     const payload = {
       fields: {
         project: {
           key: config.projectKey
         },
-        summary: ticketData.summary,
+        summary: cleanTicketData.summary,
         description: {
           type: "doc",
           version: 1,
@@ -35,32 +37,32 @@ class JiraService {
               content: [
                 {
                   type: "text",
-                  text: ticketData.description
+                  text: cleanTicketData.description
                 }
               ]
             }
           ]
         },
         issuetype: {
-          name: ticketData.workType
+          name: cleanTicketData.workType
         },
         priority: {
-          name: ticketData.priority
+          name: cleanTicketData.priority
         }
       }
     };
 
     // Add components if selected
-    if (ticketData.components && ticketData.components.length > 0) {
-      payload.fields.components = ticketData.components.map(component => ({
+    if (cleanTicketData.components && cleanTicketData.components.length > 0) {
+      payload.fields.components = cleanTicketData.components.map(component => ({
         name: component
       }));
     }
 
     // Add custom fields based on configuration
-    if (config.customFields?.ticketClassification && ticketData.ticketClassification) {
-      payload.fields[config.customFields.ticketClassification] = ticketData.ticketClassification;
-    } else if (ticketData.ticketClassification && !config.customFields?.ticketClassification) {
+    if (config.customFields?.ticketClassification && cleanTicketData.ticketClassification) {
+      payload.fields[config.customFields.ticketClassification] = cleanTicketData.ticketClassification;
+    } else if (cleanTicketData.ticketClassification && !config.customFields?.ticketClassification) {
       console.log(chalk.yellow('\n⚠️  Warning: Ticket classification selected but no custom field configured.'));
       console.log(chalk.white('   To enable ticket classification, add the field ID to your .jirarc:'));
       console.log(chalk.white('   "customFields": { "ticketClassification": "customfield_XXXXX" }'));

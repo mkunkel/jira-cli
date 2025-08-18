@@ -149,6 +149,10 @@ The CLI looks for configuration in this order:
   "ui": {
     "pageSize": 10
   },
+  "componentTracking": {
+    "recentDays": 30,
+    "enabled": true
+  },
   "componentUsage": {}
 }
 ```
@@ -314,13 +318,24 @@ Components are automatically fetched from your Jira project using the `/rest/api
 
 #### Component Usage Tracking
 The CLI tracks which components you use and when:
-- **Recently Used**: Components used within the last 30 days appear at the top of the list
-- **Automatic Sorting**: Most recently used components appear first
-- **Visual Separator**: A separator line divides recently used from other components
-- **Persistent Storage**: Usage data is stored in your `.jirarc` file
+- **Recently Used**: Components used within the configurable timeframe (default: 30 days) appear at the top
+- **Alphabetical Sorting**: Recently used and other components are sorted alphabetically within each group
+- **Visual Layout**: Recently used components appear first, followed by "--- Other Components ---" separator
+- **Automatic Cleanup**: Removes non-existent components and old usage data automatically
+- **Configurable**: Set `componentTracking.recentDays` to change the recent timeframe
+- **Persistent Storage**: Usage data is stored in your `.jirarc` file after successful ticket creation
 - **Privacy**: Usage tracking is local only - no data is sent to external services
 
-The components are sorted alphabetically within each group for easier selection.
+Example component selection layout:
+```
+--- Finish selecting components ---
+API                    (recently used)
+Frontend              (recently used)
+--- Other Components ---
+Backend
+Database
+Infrastructure
+```
 
 ### UI Configuration
 The `ui.pageSize` setting in `.jirarc` controls how many items are displayed in selection menus:
@@ -387,6 +402,24 @@ Example configurations:
   "Technical Debt",
   "Documentation"
 ]
+```
+
+### Component Tracking Configuration
+The `componentTracking` setting controls component usage tracking behavior:
+- **enabled**: Enable/disable usage tracking (default: `true`)
+- **recentDays**: How many days to consider "recently used" (default: `30`)
+
+Example configurations:
+```json
+"componentTracking": {
+  "enabled": true,
+  "recentDays": 14    // Show components used in last 2 weeks
+}
+```
+```json
+"componentTracking": {
+  "enabled": false     // Disable usage tracking entirely
+}
 ```
 
 ## Troubleshooting
