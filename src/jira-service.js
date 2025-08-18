@@ -56,10 +56,10 @@ class JiraService {
       }));
     }
 
-    // Add custom fields for ticket classification and software capitalization project
-    // Note: These field IDs would need to be configured based on your Jira instance
-    // payload.fields.customfield_xxxxx = ticketData.ticketClassification;
-    // payload.fields.customfield_yyyyy = ticketData.softwareCapitalizationProject;
+    // Add custom fields based on configuration
+    if (config.customFields?.ticketClassification && ticketData.ticketClassification) {
+      payload.fields[config.customFields.ticketClassification] = ticketData.ticketClassification;
+    }
 
     return payload;
   }

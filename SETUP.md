@@ -2,16 +2,7 @@
 
 ## Quick Start
 
-1. **In  "defaults": {
-    "workType": "Task",
-    "priority": "Medium", 
-    "ticketClassification": "Feature/Enhancemen   ```json
-   {
-     "customFields": {
-       "ticketClassification": "customfield_10238"  
-     }
-   }
-   ```encies:**
+1. **Install dependencies:**
    ```bash
    npm install
    ```
@@ -48,12 +39,7 @@ Create a `.jirarc` file in your home directory or project root:
   "defaults": {
     "workType": "Task",
     "priority": "Medium",
-    "ticketClassification": "Feature/Enhancement",
-    "softwareCapitalizationProjects": [
-      "Lonely Planet Website",
-      "Mobile App - iOS",
-      "Backend Services"
-    ]
+    "ticketClassification": "Feature/Enhancement"
   }
 }
 ```
@@ -158,11 +144,7 @@ The CLI provides tools to help you find custom field IDs:
    ```json
    {
      "customFields": {
-       "softwareCapitalizationProject": "customfield_10801",
        "ticketClassification": "customfield_10238"
      }
    }
    ```
-payload.fields.customfield_10001 = ticketData.ticketClassification;
-payload.fields.customfield_10002 = ticketData.softwareCapitalizationProject;
-```

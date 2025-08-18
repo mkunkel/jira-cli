@@ -22,6 +22,9 @@ class JiraTicketCLI {
       // Load configuration
       await this.loadConfig();
 
+      // Validate token before proceeding
+      await this.validateToken();
+
       // Collect ticket information
       const ticketData = await this.collectTicketData();
 
@@ -103,8 +106,7 @@ class JiraTicketCLI {
       defaults: {
         workType: 'Task',
         priority: 'Medium',
-        ticketClassification: 'Feature/Enhancement',
-        softwareCapitalizationProject: 'Lonely Planet Website'
+        ticketClassification: 'Feature/Enhancement'
       },
       ui: {
         pageSize: 10
@@ -114,6 +116,44 @@ class JiraTicketCLI {
     const configPath = path.join(os.homedir(), '.jirarc');
     await fs.writeFile(configPath, JSON.stringify(this.config, null, 2));
     console.log(chalk.green(`✓ Configuration saved to: ${configPath}\n`));
+  }
+
+  async validateToken() {
+    const spinner = ora('Validating API token...').start();
+
+    try {
+      // Test the token by making a simple API call
+      await this.jiraService.testConnection(this.config);
+      spinner.succeed('API token is valid');
+    } catch (error) {
+      spinner.fail('API token validation failed');
+
+      // Provide helpful error messages based on the error type
+      if (error.message.includes('401') || error.message.includes('unauthorized')) {
+        throw new Error(
+          'API token has expired or is invalid.\n' +
+          '  → Generate a new token at: https://id.atlassian.com/manage-profile/security/api-tokens\n' +
+          '  → Update your .jirarc file with the new token'
+        );
+      } else if (error.message.includes('403') || error.message.includes('forbidden')) {
+        throw new Error(
+          'API token lacks sufficient permissions.\n' +
+          '  → Ensure your Jira account has permission to create tickets\n' +
+          '  → Check if your account has access to the project: ' + this.config.projectKey
+        );
+      } else if (error.message.includes('Network error') || error.message.includes('ENOTFOUND')) {
+        throw new Error(
+          'Cannot connect to Jira instance.\n' +
+          '  → Check your internet connection\n' +
+          '  → Verify the Jira URL in .jirarc: ' + this.config.jiraUrl
+        );
+      } else {
+        throw new Error(
+          'Token validation failed: ' + error.message + '\n' +
+          '  → Run `jira --test-connection` to test your configuration'
+        );
+      }
+    }
   }
 
   async collectTicketData() {
@@ -535,8 +575,7 @@ class JiraTicketCLI {
 
       console.log(chalk.green('\n💡 To use a field, add it to your .jirarc file:'));
       console.log(chalk.white('  "customFields": {'));
-      console.log(chalk.white('    "softwareCapitalizationProject": "customfield_XXXXX",'));
-      console.log(chalk.white('    "ticketClassification": "customfield_YYYYY"'));
+      console.log(chalk.white('    "ticketClassification": "customfield_XXXXX"'));
       console.log(chalk.white('  }'));
 
     } catch (error) {
