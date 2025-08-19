@@ -353,7 +353,7 @@ class JiraTicketCLI {
     const basicAnswers = await inquirer.prompt(basicQuestions);
 
     // Handle components selection with autocomplete
-    const selectedComponents = await this.selectComponents(components, isDryRun);
+    const selectedComponents = await this.selectComponents(components, basicAnswers, isDryRun);
 
     // Continue with remaining questions
     const remainingQuestions = [
@@ -401,7 +401,7 @@ class JiraTicketCLI {
     };
   }
 
-  async selectComponents(availableComponents, isDryRun = false) {
+  async selectComponents(availableComponents, ticketData, isDryRun = false) {
     const selectedComponents = [];
 
     while (true) {
@@ -435,7 +435,9 @@ class JiraTicketCLI {
           : `   Select another component (${selectedComponents.length} selected):`,
         choices: choices,
         pageSize: this.config?.ui?.pageSize || 10,
-        nonSelectableItems: ['--- Other Components ---']
+        nonSelectableItems: ['--- Other Components ---'],
+        ticketData: ticketData,
+        selectedComponents: selectedComponents
       });
 
       if (result === '--- Finish selecting components ---') {
@@ -456,7 +458,13 @@ class JiraTicketCLI {
     return selectedComponents;
   }
 
-  async customAutocompletePrompt({ message, choices, pageSize = 10, nonSelectableItems = [] }) {
+  async customAutocompletePrompt({ message, choices, pageSize = 10, nonSelectableItems = [], ticketData = {}, selectedComponents = [] }) {
+    // Helper function to truncate text
+    const truncateText = (text, maxLength = 50) => {
+      if (!text) return '[not entered]';
+      if (text.length <= maxLength) return text;
+      return text.substring(0, maxLength - 3) + '...';
+    };
     const readline = require('readline');
 
     return new Promise((resolve) => {
@@ -484,9 +492,9 @@ class JiraTicketCLI {
 
         // Re-print the CLI header and previous questions context
         console.log(chalk.blue('🎫 Jira Ticket Creator\n'));
-        console.log(chalk.green('✓ Work type: Task'));
-        console.log(chalk.green('✓ Summary: [entered]'));
-        console.log(chalk.green('✓ Description: [entered]\n'));
+        console.log(chalk.green(`✓ Work type: ${ticketData.workType || 'Task'}`));
+        console.log(chalk.green(`✓ Summary: ${truncateText(ticketData.summary)}`));
+        console.log(chalk.green(`✓ Description: ${truncateText(ticketData.description, 60)}\n`));
 
         // Show current question with filter
         const filterText = filter ? ` [Filter: "${filter}"]` : '';
@@ -577,10 +585,10 @@ class JiraTicketCLI {
 
         // Print just the essential context
         console.log(chalk.blue('🎫 Jira Ticket Creator\n'));
-        console.log(chalk.green('✓ Work type: Task'));
-        console.log(chalk.green('✓ Summary: [entered]'));
-        console.log(chalk.green('✓ Description: [entered]'));
-        console.log(chalk.green('✓ Components: [selected]\n'));
+        console.log(chalk.green(`✓ Work type: ${ticketData.workType || 'Task'}`));
+        console.log(chalk.green(`✓ Summary: ${truncateText(ticketData.summary)}`));
+        console.log(chalk.green(`✓ Description: ${truncateText(ticketData.description, 60)}`));
+        console.log(chalk.green(`✓ Components: ${selectedComponents.length > 0 ? selectedComponents.join(', ') : 'none selected'}\n`));
       };
 
       // Initial display
