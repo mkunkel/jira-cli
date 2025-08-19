@@ -19,6 +19,112 @@ class JiraService {
     });
   }
 
+  // Helper function to detect URLs and Jira ticket references, create ADF content with links
+  createDescriptionContent(description, config) {
+    if (!description) {
+      return [
+        {
+          type: "paragraph",
+          content: [
+            {
+              type: "text",
+              text: ""
+            }
+          ]
+        }
+      ];
+    }
+
+    // Create an array to store all matches with their positions
+    const matches = [];
+
+    // Find all URLs
+    const urlRegex = /(https?:\/\/[^\s]+)/g;
+    let match;
+    while ((match = urlRegex.exec(description)) !== null) {
+      matches.push({
+        start: match.index,
+        end: match.index + match[0].length,
+        text: match[0],
+        type: 'url',
+        href: match[0]
+      });
+    }
+
+    // Find all Jira ticket references
+    const projectKey = config?.projectKey || '';
+    if (projectKey) {
+      const jiraTicketRegex = new RegExp(`\\b(${projectKey}-\\d+)\\b`, 'g');
+      while ((match = jiraTicketRegex.exec(description)) !== null) {
+        const ticketKey = match[0];
+        const jiraUrl = `https://${config.jiraUrl.replace(/^https?:\/\//, '')}/browse/${ticketKey}`;
+        matches.push({
+          start: match.index,
+          end: match.index + match[0].length,
+          text: ticketKey,
+          type: 'jira',
+          href: jiraUrl
+        });
+      }
+    }
+
+    // Sort matches by start position
+    matches.sort((a, b) => a.start - b.start);
+
+    // Build the content parts
+    const parts = [];
+    let lastIndex = 0;
+
+    matches.forEach(match => {
+      // Add text before the match
+      if (match.start > lastIndex) {
+        parts.push({
+          type: "text",
+          text: description.substring(lastIndex, match.start)
+        });
+      }
+
+      // Add the link
+      parts.push({
+        type: "text",
+        text: match.text,
+        marks: [
+          {
+            type: "link",
+            attrs: {
+              href: match.href
+            }
+          }
+        ]
+      });
+
+      lastIndex = match.end;
+    });
+
+    // Add remaining text after the last match
+    if (lastIndex < description.length) {
+      parts.push({
+        type: "text",
+        text: description.substring(lastIndex)
+      });
+    }
+
+    // If no matches found, return simple text
+    if (parts.length === 0) {
+      parts.push({
+        type: "text",
+        text: description
+      });
+    }
+
+    return [
+      {
+        type: "paragraph",
+        content: parts
+      }
+    ];
+  }
+
   buildCreateTicketPayload(ticketData, config) {
     // Remove availableComponents if present (used only for dry run simulation)
     const { availableComponents, ...cleanTicketData } = ticketData;
@@ -31,17 +137,7 @@ class JiraService {
         description: {
           type: "doc",
           version: 1,
-          content: [
-            {
-              type: "paragraph",
-              content: [
-                {
-                  type: "text",
-                  text: cleanTicketData.description
-                }
-              ]
-            }
-          ]
+          content: this.createDescriptionContent(cleanTicketData.description, config)
         },
         issuetype: {
           name: cleanTicketData.workType
