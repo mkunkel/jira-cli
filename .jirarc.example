@@ -21,7 +21,8 @@
     "Feature"
   ],
   "customFields": {
-    "ticketClassification": "customfield_10238"
+    "ticketClassification": "customfield_10238",
+    "ticketClassificationFormat": "value"
   },
   "editor": {
     "command": null

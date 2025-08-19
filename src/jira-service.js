@@ -61,7 +61,20 @@ class JiraService {
 
     // Add custom fields based on configuration
     if (config.customFields?.ticketClassification && cleanTicketData.ticketClassification) {
-      payload.fields[config.customFields.ticketClassification] = cleanTicketData.ticketClassification;
+      // Jira custom select fields can expect different formats - try the most common one
+      const fieldValue = cleanTicketData.ticketClassification;
+
+      // Try different formats based on field configuration or use default
+      if (config.customFields.ticketClassificationFormat === 'string') {
+        payload.fields[config.customFields.ticketClassification] = fieldValue;
+      } else if (config.customFields.ticketClassificationFormat === 'id') {
+        payload.fields[config.customFields.ticketClassification] = { id: fieldValue };
+      } else if (config.customFields.ticketClassificationFormat === 'name') {
+        payload.fields[config.customFields.ticketClassification] = { name: fieldValue };
+      } else {
+        // Default: try 'value' format (most common for select fields)
+        payload.fields[config.customFields.ticketClassification] = { value: fieldValue };
+      }
     } else if (cleanTicketData.ticketClassification && !config.customFields?.ticketClassification) {
       console.log(chalk.yellow('\n⚠️  Warning: Ticket classification selected but no custom field configured.'));
       console.log(chalk.white('   To enable ticket classification, add the field ID to your .jirarc:'));

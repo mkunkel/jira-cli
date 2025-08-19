@@ -141,7 +141,8 @@ The CLI looks for configuration in this order:
     "Feature"
   ],
   "customFields": {
-    "ticketClassification": "customfield_10002"
+    "ticketClassification": "customfield_10002",
+    "ticketClassificationFormat": "value"
   },
   "editor": {
     "command": null
@@ -312,6 +313,22 @@ To find your custom field IDs:
 1. Use `./bin/jira-ticket.js --list-fields` to see all available fields
 2. Use `./bin/jira-ticket.js --field-options <fieldId>` to see field options
 3. Or go to Jira Settings → Issues → Custom fields
+
+#### Custom Field Formats
+Different Jira custom fields may require different value formats. If you get API errors, try different formats:
+
+```json
+"customFields": {
+  "ticketClassification": "customfield_10002",
+  "ticketClassificationFormat": "value"    // Default: { "value": "Bug" }
+}
+```
+
+Available formats:
+- `"value"` (default): `{ "value": "Bug" }` - Most common for select fields
+- `"string"`: `"Bug"` - Simple string value for text fields
+- `"id"`: `{ "id": "12345" }` - For fields that expect option IDs
+- `"name"`: `{ "name": "Bug" }` - Alternative for select fields
 
 ### Components
 Components are automatically fetched from your Jira project using the `/rest/api/3/project/{projectKey}/components` endpoint. The CLI validates project access at startup and will exit with an error if components cannot be fetched.
