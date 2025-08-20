@@ -19,7 +19,7 @@ class JiraService {
     });
   }
 
-  // Helper function to detect URLs and Jira ticket references, create ADF content with links
+  // Helper function to parse markdown and create ADF content with links
   createDescriptionContent(description, config) {
     if (!description) {
       return [
@@ -35,36 +35,53 @@ class JiraService {
       ];
     }
 
-    // Create an array to store all matches with their positions
+    // Split description into paragraphs (double newlines)
+    const paragraphs = description.split(/\n\s*\n/).filter(p => p.trim());
+
+    return paragraphs.map(paragraph => this.parseParagraph(paragraph.trim(), config));
+  }
+
+  // Parse a single paragraph with markdown and links
+  parseParagraph(text, config) {
+    // Create an array to store all matches with their positions and types
     const matches = [];
 
-    // Find all URLs
+    // Find markdown patterns
+    this.findMarkdownMatches(text, matches);
+
+    // Find URLs
     const urlRegex = /(https?:\/\/[^\s]+)/g;
     let match;
-    while ((match = urlRegex.exec(description)) !== null) {
-      matches.push({
-        start: match.index,
-        end: match.index + match[0].length,
-        text: match[0],
-        type: 'url',
-        href: match[0]
-      });
-    }
-
-    // Find all Jira ticket references
-    const projectKey = config?.projectKey || '';
-    if (projectKey) {
-      const jiraTicketRegex = new RegExp(`\\b(${projectKey}-\\d+)\\b`, 'g');
-      while ((match = jiraTicketRegex.exec(description)) !== null) {
-        const ticketKey = match[0];
-        const jiraUrl = `https://${config.jiraUrl.replace(/^https?:\/\//, '')}/browse/${ticketKey}`;
+    while ((match = urlRegex.exec(text)) !== null) {
+      // Check if this URL is not inside a markdown link
+      if (!this.isInsideMarkdownLink(text, match.index)) {
         matches.push({
           start: match.index,
           end: match.index + match[0].length,
-          text: ticketKey,
-          type: 'jira',
-          href: jiraUrl
+          text: match[0],
+          type: 'url',
+          href: match[0]
         });
+      }
+    }
+
+    // Find Jira ticket references
+    const projectKey = config?.projectKey || '';
+    if (projectKey) {
+      const jiraTicketRegex = new RegExp(`\\b(${projectKey}-\\d+)\\b`, 'g');
+      while ((match = jiraTicketRegex.exec(text)) !== null) {
+        // Check if this ticket ref is not inside a markdown link
+        if (!this.isInsideMarkdownLink(text, match.index)) {
+          const ticketKey = match[0];
+          const jiraUrl = `https://${config.jiraUrl.replace(/^https?:\/\//, '')}/browse/${ticketKey}`;
+          matches.push({
+            start: match.index,
+            end: match.index + match[0].length,
+            text: ticketKey,
+            type: 'jira',
+            href: jiraUrl
+          });
+        }
       }
     }
 
@@ -78,56 +95,184 @@ class JiraService {
     matches.forEach(match => {
       // Add text before the match
       if (match.start > lastIndex) {
-        parts.push({
-          type: "text",
-          text: description.substring(lastIndex, match.start)
-        });
+        const beforeText = text.substring(lastIndex, match.start);
+        this.addTextWithBasicMarkdown(beforeText, parts);
       }
 
-      // Add the link
-      parts.push({
-        type: "text",
-        text: match.text,
-        marks: [
-          {
-            type: "link",
-            attrs: {
-              href: match.href
+      // Add the match based on its type
+      if (match.type === 'bold') {
+        this.addTextWithBasicMarkdown(match.innerText, parts, ['strong']);
+      } else if (match.type === 'italic') {
+        this.addTextWithBasicMarkdown(match.innerText, parts, ['em']);
+      } else if (match.type === 'code') {
+        parts.push({
+          type: "text",
+          text: match.innerText,
+          marks: [{ type: "code" }]
+        });
+      } else if (match.type === 'link') {
+        parts.push({
+          type: "text",
+          text: match.linkText,
+          marks: [
+            {
+              type: "link",
+              attrs: {
+                href: match.href
+              }
             }
-          }
-        ]
-      });
+          ]
+        });
+      } else if (match.type === 'url' || match.type === 'jira') {
+        parts.push({
+          type: "text",
+          text: match.text,
+          marks: [
+            {
+              type: "link",
+              attrs: {
+                href: match.href
+              }
+            }
+          ]
+        });
+      }
 
       lastIndex = match.end;
     });
 
     // Add remaining text after the last match
-    if (lastIndex < description.length) {
-      parts.push({
-        type: "text",
-        text: description.substring(lastIndex)
-      });
+    if (lastIndex < text.length) {
+      const remainingText = text.substring(lastIndex);
+      this.addTextWithBasicMarkdown(remainingText, parts);
     }
 
-    // If no matches found, return simple text
+    // If no matches found, parse the entire text for basic markdown
     if (parts.length === 0) {
-      parts.push({
-        type: "text",
-        text: description
+      this.addTextWithBasicMarkdown(text, parts);
+    }
+
+    return {
+      type: "paragraph",
+      content: parts.length > 0 ? parts : [{ type: "text", text: text }]
+    };
+  }
+
+  // Find markdown patterns in text
+  findMarkdownMatches(text, matches) {
+    // Bold text: **text** or __text__
+    const boldRegex = /(\*\*|__)(.*?)\1/g;
+    let match;
+    while ((match = boldRegex.exec(text)) !== null) {
+      matches.push({
+        start: match.index,
+        end: match.index + match[0].length,
+        text: match[0],
+        type: 'bold',
+        innerText: match[2]
       });
     }
 
-    return [
-      {
-        type: "paragraph",
-        content: parts
+    // Italic text: *text* or _text_ (but not if it's part of bold)
+    const italicRegex = /(?<!\*)\*([^*]+)\*(?!\*)|(?<!_)_([^_]+)_(?!_)/g;
+    while ((match = italicRegex.exec(text)) !== null) {
+      matches.push({
+        start: match.index,
+        end: match.index + match[0].length,
+        text: match[0],
+        type: 'italic',
+        innerText: match[1] || match[2]
+      });
+    }
+
+    // Inline code: `text`
+    const codeRegex = /`([^`]+)`/g;
+    while ((match = codeRegex.exec(text)) !== null) {
+      matches.push({
+        start: match.index,
+        end: match.index + match[0].length,
+        text: match[0],
+        type: 'code',
+        innerText: match[1]
+      });
+    }
+
+    // Markdown links: [text](url)
+    const linkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
+    while ((match = linkRegex.exec(text)) !== null) {
+      matches.push({
+        start: match.index,
+        end: match.index + match[0].length,
+        text: match[0],
+        type: 'link',
+        linkText: match[1],
+        href: match[2]
+      });
+    }
+  }
+
+  // Check if a position is inside a markdown link
+  isInsideMarkdownLink(text, position) {
+    const linkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
+    let match;
+    while ((match = linkRegex.exec(text)) !== null) {
+      if (position >= match.index && position < match.index + match[0].length) {
+        return true;
       }
-    ];
+    }
+    return false;
+  }
+
+  // Add text with basic markdown parsing (for text segments between other matches)
+  addTextWithBasicMarkdown(text, parts, existingMarks = []) {
+    if (!text) return;
+
+    // For simplicity in nested parsing, just add as plain text if we already have marks
+    if (existingMarks.length > 0) {
+      parts.push({
+        type: "text",
+        text: text,
+        marks: existingMarks.map(mark => ({ type: mark }))
+      });
+      return;
+    }
+
+    // Split by any remaining markdown that wasn't caught in main parsing
+    const segments = text.split(/(\*\*.*?\*\*|__.*?__|`.*?`)/);
+
+    segments.forEach(segment => {
+      if (!segment) return;
+
+      if (segment.startsWith('**') && segment.endsWith('**')) {
+        parts.push({
+          type: "text",
+          text: segment.slice(2, -2),
+          marks: [{ type: "strong" }]
+        });
+      } else if (segment.startsWith('__') && segment.endsWith('__')) {
+        parts.push({
+          type: "text",
+          text: segment.slice(2, -2),
+          marks: [{ type: "strong" }]
+        });
+      } else if (segment.startsWith('`') && segment.endsWith('`')) {
+        parts.push({
+          type: "text",
+          text: segment.slice(1, -1),
+          marks: [{ type: "code" }]
+        });
+      } else {
+        parts.push({
+          type: "text",
+          text: segment
+        });
+      }
+    });
   }
 
   buildCreateTicketPayload(ticketData, config) {
-    // Remove availableComponents if present (used only for dry run simulation)
-    const { availableComponents, ...cleanTicketData } = ticketData;
+    // Remove dry run simulation fields
+    const { availableComponents, availableStatuses, availableAssignees, currentUser, ...cleanTicketData } = ticketData;
     const payload = {
       fields: {
         project: {
@@ -153,6 +298,13 @@ class JiraService {
       payload.fields.components = cleanTicketData.components.map(component => ({
         name: component
       }));
+    }
+
+    // Add assignee if provided
+    if (cleanTicketData.assignee) {
+      payload.fields.assignee = {
+        accountId: cleanTicketData.assignee.accountId
+      };
     }
 
     // Add custom fields based on configuration
@@ -190,6 +342,12 @@ class JiraService {
 
     try {
       const response = await this.client.post('/rest/api/3/issue', payload);
+
+      // If status was provided, transition the ticket after creation
+      if (ticketData.status) {
+        await this.transitionTicket(response.data.key, ticketData.status.id, config);
+      }
+
       return response.data;
     } catch (error) {
       if (error.response) {
@@ -202,6 +360,23 @@ class JiraService {
       } else {
         throw new Error(`Request error: ${error.message}`);
       }
+    }
+  }
+
+  async transitionTicket(issueKey, statusId, config) {
+    if (!this.client) {
+      this.initializeClient(config);
+    }
+
+    try {
+      await this.client.post(`/rest/api/3/issue/${issueKey}/transitions`, {
+        transition: {
+          id: statusId.toString()
+        }
+      });
+    } catch (error) {
+      // Don't fail the whole ticket creation if status transition fails
+      console.log(chalk.yellow(`Warning: Could not set status on ticket ${issueKey}: ${error.message}`));
     }
   }
 
@@ -241,6 +416,149 @@ class JiraService {
       } else {
         throw new Error(`Failed to fetch components from project '${config.projectKey}': ${error.message}`);
       }
+    }
+  }
+
+  async getProjectStatuses(config) {
+    if (!this.client) {
+      this.initializeClient(config);
+    }
+
+    try {
+      const response = await this.client.get(`/rest/api/3/project/${config.projectKey}/statuses`);
+      // Extract statuses from all issue types and deduplicate
+      const allStatuses = [];
+      response.data.forEach(issueType => {
+        issueType.statuses.forEach(status => {
+          if (!allStatuses.find(s => s.id === status.id)) {
+            allStatuses.push({
+              id: status.id,
+              name: status.name
+            });
+          }
+        });
+      });
+      return allStatuses;
+    } catch (error) {
+      if (error.response?.status === 404) {
+        throw new Error(`Project '${config.projectKey}' not found. Please check your project key in .jirarc`);
+      } else if (error.response?.status === 403) {
+        throw new Error(`Access denied to project '${config.projectKey}'. Please check your permissions`);
+      } else if (error.response?.status === 401) {
+        throw new Error('Invalid API token. Please check your authentication in .jirarc');
+      } else {
+        throw new Error(`Failed to fetch project statuses: ${error.message}`);
+      }
+    }
+  }
+
+  async getProjectAssignees(config) {
+    if (!this.client) {
+      this.initializeClient(config);
+    }
+
+    try {
+      // Get all assignable users (handle pagination)
+      let allUsers = [];
+      let startAt = 0;
+      // Jira API supports up to 1000 results per page for most endpoints
+      // Make this configurable via config if needed
+      const maxResults = config.api?.assigneePageSize || 1000;
+
+      while (true) {
+        const response = await this.client.get(`/rest/api/3/user/assignable/search`, {
+          params: {
+            project: config.projectKey,
+            maxResults: maxResults,
+            startAt: startAt
+          }
+        });
+
+        allUsers = allUsers.concat(response.data);
+
+        // Show progress for large user bases
+        if (startAt > 0) {
+          process.stdout.write(`\r   Fetched ${allUsers.length} users (${response.data.length} in this batch)...`);
+        }
+
+        // Break if we got less than maxResults (last page)
+        if (response.data.length < maxResults) {
+          if (startAt > 0) {
+            console.log(`\r   ✓ Fetched ${allUsers.length} total assignable users`);
+          }
+          break;
+        }
+
+        startAt += maxResults;
+
+        // Safety check to prevent infinite loops (increased since we're fetching larger pages)
+        if (startAt > 50000) {
+          console.log(chalk.yellow(`\nWarning: Stopped fetching assignees at ${allUsers.length} users (safety limit)`));
+          break;
+        }
+      }
+            return allUsers
+        .filter(user =>
+          user &&
+          user.accountId &&
+          user.displayName &&
+          user.displayName !== 'undefined' &&
+          typeof user.displayName === 'string' &&
+          user.displayName.trim().length > 0
+        ) // Filter out invalid users
+        .map(user => ({
+          accountId: user.accountId,
+          displayName: user.displayName.trim(),
+          emailAddress: user.emailAddress || ''
+        }));
+    } catch (error) {
+      if (error.response?.status === 404) {
+        throw new Error(`Project '${config.projectKey}' not found. Please check your project key in .jirarc`);
+      } else if (error.response?.status === 403) {
+        throw new Error(`Access denied to project '${config.projectKey}'. Please check your permissions`);
+      } else if (error.response?.status === 401) {
+        throw new Error('Invalid API token. Please check your authentication in .jirarc');
+      } else {
+        throw new Error(`Failed to fetch project assignees: ${error.message}`);
+      }
+    }
+  }
+
+  async getCurrentUser(config) {
+    if (!this.client) {
+      this.initializeClient(config);
+    }
+
+    try {
+      const response = await this.client.get('/rest/api/3/myself');
+      return {
+        accountId: response.data.accountId,
+        displayName: response.data.displayName,
+        emailAddress: response.data.emailAddress
+      };
+    } catch (error) {
+      if (error.response?.status === 401) {
+        throw new Error('Invalid API token. Please check your authentication in .jirarc');
+      } else {
+        throw new Error(`Failed to fetch current user: ${error.message}`);
+      }
+    }
+  }
+
+  async transitionTicket(issueKey, statusId, config) {
+    if (!this.client) {
+      this.initializeClient(config);
+    }
+
+    try {
+      await this.client.post(`/rest/api/3/issue/${issueKey}/transitions`, {
+        transition: {
+          id: statusId.toString()
+        }
+      });
+    } catch (error) {
+      // Don't fail the whole ticket creation if status transition fails
+      console.log(chalk.yellow(`Warning: Could not set status on ticket ${issueKey}: ${error.message}`));
     }
   }
 

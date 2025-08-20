@@ -30,9 +30,22 @@
   "ui": {
     "pageSize": 10
   },
+  "api": {
+    "assigneePageSize": 1000
+  },
   "componentTracking": {
     "recentDays": 30,
     "enabled": true
   },
-  "componentUsage": {}
+  "componentUsage": {},
+  "statusTracking": {
+    "recentDays": 30,
+    "enabled": true
+  },
+  "statusUsage": {},
+  "assigneeTracking": {
+    "recentDays": 30,
+    "enabled": true
+  },
+  "assigneeUsage": {}
 }

@@ -130,11 +130,24 @@ class JiraTicketCLI {
       ui: {
         pageSize: 10
       },
+      api: {
+        assigneePageSize: 1000
+      },
       componentTracking: {
         recentDays: 30,
         enabled: true
       },
-      componentUsage: {}
+      componentUsage: {},
+      statusTracking: {
+        recentDays: 30,
+        enabled: true
+      },
+      statusUsage: {},
+      assigneeTracking: {
+        recentDays: 30,
+        enabled: true
+      },
+      assigneeUsage: {}
     };
 
     const configPath = path.join(os.homedir(), '.jirarc');
@@ -172,6 +185,52 @@ class JiraTicketCLI {
       const lastUsedDate = new Date(usage.lastUsed);
       if (lastUsedDate < cutoffDate) {
         delete this.config.componentUsage[componentName];
+      }
+    }
+  }
+
+  cleanupStatusUsage(availableStatuses) {
+    if (!this.config?.statusTracking?.enabled || !this.config.statusUsage) {
+      return;
+    }
+
+    const recentDays = this.config.statusTracking?.recentDays || 30;
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - recentDays);
+
+    // Create array of available status names for easy lookup
+    const availableStatusNames = new Set(availableStatuses.map(s => s.name));
+
+    // Remove statuses that no longer exist or are too old
+    for (const [statusName, usage] of Object.entries(this.config.statusUsage)) {
+      const isOld = new Date(usage.lastUsed) < cutoffDate;
+      const isNonExistent = !availableStatusNames.has(statusName);
+
+      if (isOld || isNonExistent) {
+        delete this.config.statusUsage[statusName];
+      }
+    }
+  }
+
+  cleanupAssigneeUsage(availableAssignees) {
+    if (!this.config?.assigneeTracking?.enabled || !this.config.assigneeUsage) {
+      return;
+    }
+
+    const recentDays = this.config.assigneeTracking?.recentDays || 30;
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - recentDays);
+
+    // Create array of available assignee names for easy lookup
+    const availableAssigneeNames = new Set(availableAssignees.map(a => a.displayName));
+
+    // Remove assignees that no longer exist or are too old
+    for (const [assigneeName, usage] of Object.entries(this.config.assigneeUsage)) {
+      const isOld = new Date(usage.lastUsed) < cutoffDate;
+      const isNonExistent = !availableAssigneeNames.has(assigneeName);
+
+      if (isOld || isNonExistent) {
+        delete this.config.assigneeUsage[assigneeName];
       }
     }
   }
@@ -214,6 +273,92 @@ class JiraTicketCLI {
     };
   }
 
+  organizeStatuses(availableStatuses) {
+    if (!this.config?.statusTracking?.enabled) {
+      // If tracking disabled, return all available statuses alphabetically
+      return {
+        recentStatuses: [],
+        otherStatuses: [...availableStatuses].sort((a, b) => a.name.localeCompare(b.name))
+      };
+    }
+
+    const recentDays = this.config.statusTracking?.recentDays || 30;
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - recentDays);
+
+    const recentStatuses = [];
+    const otherStatuses = [];
+
+    for (const status of availableStatuses) {
+      const usage = this.config.statusUsage?.[status.name];
+      if (usage && new Date(usage.lastUsed) >= cutoffDate) {
+        recentStatuses.push(status);
+      } else {
+        otherStatuses.push(status);
+      }
+    }
+
+    // Sort both arrays alphabetically by name
+    recentStatuses.sort((a, b) => a.name.localeCompare(b.name));
+    otherStatuses.sort((a, b) => a.name.localeCompare(b.name));
+
+    return {
+      recentStatuses,
+      otherStatuses
+    };
+  }
+
+  organizeAssignees(availableAssignees, currentUser) {
+    // Filter out any invalid assignees first
+    const validAssignees = availableAssignees.filter(assignee =>
+      assignee &&
+      assignee.accountId &&
+      assignee.displayName &&
+      assignee.displayName !== 'undefined' &&
+      typeof assignee.displayName === 'string'
+    );
+
+    if (!this.config?.assigneeTracking?.enabled) {
+      // If tracking disabled, return all available assignees alphabetically (excluding current user)
+      return {
+        recentAssignees: [],
+        otherAssignees: validAssignees
+          .filter(assignee => assignee.accountId !== currentUser.accountId)
+          .sort((a, b) => a.displayName.localeCompare(b.displayName))
+      };
+    }
+
+    const recentDays = this.config.assigneeTracking?.recentDays || 30;
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - recentDays);
+
+    const recentAssignees = [];
+    const otherAssignees = [];
+
+    for (const assignee of validAssignees) {
+      // Skip current user
+      if (assignee.accountId === currentUser.accountId) {
+        continue;
+      }
+
+      const usage = this.config.assigneeUsage?.[assignee.displayName];
+      if (usage && new Date(usage.lastUsed) >= cutoffDate) {
+        recentAssignees.push(assignee);
+      } else {
+        otherAssignees.push(assignee);
+      }
+    }
+
+    // Sort both arrays alphabetically by display name
+    recentAssignees.sort((a, b) => a.displayName.localeCompare(b.displayName));
+    otherAssignees.sort((a, b) => a.displayName.localeCompare(b.displayName));
+
+    return {
+      recentAssignees,
+      otherAssignees
+    };
+  }
+
   updateComponentUsage(componentName) {
     if (!this.config?.componentTracking?.enabled) {
       return;
@@ -227,6 +372,42 @@ class JiraTicketCLI {
     const existing = this.config.componentUsage[componentName];
 
     this.config.componentUsage[componentName] = {
+      lastUsed: now,
+      count: existing ? existing.count + 1 : 1
+    };
+  }
+
+  updateStatusUsage(statusName) {
+    if (!this.config?.statusTracking?.enabled) {
+      return;
+    }
+
+    if (!this.config.statusUsage) {
+      this.config.statusUsage = {};
+    }
+
+    const now = new Date().toISOString();
+    const existing = this.config.statusUsage[statusName];
+
+    this.config.statusUsage[statusName] = {
+      lastUsed: now,
+      count: existing ? existing.count + 1 : 1
+    };
+  }
+
+  updateAssigneeUsage(assigneeName) {
+    if (!this.config?.assigneeTracking?.enabled) {
+      return;
+    }
+
+    if (!this.config.assigneeUsage) {
+      this.config.assigneeUsage = {};
+    }
+
+    const now = new Date().toISOString();
+    const existing = this.config.assigneeUsage[assigneeName];
+
+    this.config.assigneeUsage[assigneeName] = {
       lastUsed: now,
       count: existing ? existing.count + 1 : 1
     };
@@ -251,6 +432,54 @@ class JiraTicketCLI {
           return;
         } catch (error) {
           console.warn(chalk.yellow(`Warning: Could not save component usage to ${configPath}`));
+        }
+      }
+    }
+  }
+
+  async saveStatusUsage() {
+    if (!this.config?.statusTracking?.enabled) {
+      return;
+    }
+
+    // Find the config file path (same logic as loadConfig)
+    const configPaths = [
+      path.join(process.cwd(), '.jirarc'),
+      path.join(os.homedir(), '.jirarc'),
+      path.join(__dirname, '..', '.jirarc')
+    ];
+
+    for (const configPath of configPaths) {
+      if (await fs.pathExists(configPath)) {
+        try {
+          await fs.writeFile(configPath, JSON.stringify(this.config, null, 2));
+          return;
+        } catch (error) {
+          console.warn(chalk.yellow(`Warning: Could not save status usage to ${configPath}`));
+        }
+      }
+    }
+  }
+
+  async saveAssigneeUsage() {
+    if (!this.config?.assigneeTracking?.enabled) {
+      return;
+    }
+
+    // Find the config file path (same logic as loadConfig)
+    const configPaths = [
+      path.join(process.cwd(), '.jirarc'),
+      path.join(os.homedir(), '.jirarc'),
+      path.join(__dirname, '..', '.jirarc')
+    ];
+
+    for (const configPath of configPaths) {
+      if (await fs.pathExists(configPath)) {
+        try {
+          await fs.writeFile(configPath, JSON.stringify(this.config, null, 2));
+          return;
+        } catch (error) {
+          console.warn(chalk.yellow(`Warning: Could not save assignee usage to ${configPath}`));
         }
       }
     }
@@ -307,11 +536,22 @@ class JiraTicketCLI {
   async collectTicketData(isDryRun = false) {
     const pageSize = this.config?.ui?.pageSize || 10;
 
-    // Get project components
-    const components = await this.jiraService.getProjectComponents(this.config);
+    // Get project data
+    console.log(chalk.blue('📡 Fetching project data...'));
+    const [components, statuses, currentUser] = await Promise.all([
+      this.jiraService.getProjectComponents(this.config),
+      this.jiraService.getProjectStatuses(this.config),
+      this.jiraService.getCurrentUser(this.config)
+    ]);
 
-    // Clean up component usage data
+    // Get assignees separately with progress indicator
+    console.log(chalk.blue('👥 Fetching assignable users (this may take a moment for large organizations)...'));
+    const assignees = await this.jiraService.getProjectAssignees(this.config);
+
+    // Clean up usage data
     this.cleanupComponentUsage(components);
+    this.cleanupStatusUsage(statuses);
+    this.cleanupAssigneeUsage(assignees);
 
     // Collect basic ticket information first
     const basicQuestions = [
@@ -355,50 +595,230 @@ class JiraTicketCLI {
     // Handle components selection with autocomplete
     const selectedComponents = await this.selectComponents(components, basicAnswers, isDryRun);
 
-    // Continue with remaining questions
-    const remainingQuestions = [
-      {
-        type: 'list',
-        name: 'priority',
-        message: '5) Select priority:',
-        choices: [
-          'Lowest',
-          'Low',
-          'Medium',
-          'High',
-          'Highest',
-          'Blocker'
-        ],
-        default: this.config?.defaults?.priority || 'Medium',
-        loop: false,
-        pageSize: pageSize
-      },
-      {
-        type: 'list',
-        name: 'ticketClassification',
-        message: '6) Select ticket classification:',
-        choices: [
-          'Bug',
-          'Feature/Enhancement',
-          'Operations',
-          'R&D',
-          'Risk',
-          'Tech Debt'
-        ],
-        default: this.config?.defaults?.ticketClassification || 'Feature/Enhancement',
-        loop: false,
-        pageSize: pageSize
-      }
-    ];
+    // Handle status selection (pass current state including components)
+    const currentStateForStatus = { ...basicAnswers, components: selectedComponents };
+    const selectedStatus = await this.selectStatus(statuses, currentStateForStatus, isDryRun);
 
-    const remainingAnswers = await inquirer.prompt(remainingQuestions);
+    // Handle assignee selection (pass current state including components and status)
+    const currentState = { ...basicAnswers, components: selectedComponents, status: selectedStatus };
+    const selectedAssignee = await this.selectAssignee(assignees, currentUser, currentState, isDryRun);
 
-    return {
+        // Continue with remaining questions - handle individually for consistent formatting
+    const priorityAnswer = await inquirer.prompt([{
+      type: 'list',
+      name: 'priority',
+      message: '7) Select priority:',
+      choices: [
+        'Lowest',
+        'Low',
+        'Medium',
+        'High',
+        'Highest',
+        'Blocker'
+      ],
+      default: this.config?.defaults?.priority || 'Medium',
+      loop: false,
+      pageSize: pageSize
+    }]);
+
+    // Clear the question line and show clean checkmark
+    process.stdout.write('\x1B[1A\x1B[2K'); // Move up one line and clear it
+    console.log(chalk.green(`✓ Priority: ${priorityAnswer.priority}`));
+
+    const classificationAnswer = await inquirer.prompt([{
+      type: 'list',
+      name: 'ticketClassification',
+      message: '8) Select ticket classification:',
+      choices: [
+        'Bug',
+        'Feature/Enhancement',
+        'Operations',
+        'R&D',
+        'Risk',
+        'Tech Debt'
+      ],
+      default: this.config?.defaults?.ticketClassification || 'Feature/Enhancement',
+      loop: false,
+      pageSize: pageSize
+    }]);
+
+    // Clear the question line and show clean checkmark
+    process.stdout.write('\x1B[1A\x1B[2K'); // Move up one line and clear it
+    console.log(chalk.green(`✓ Classification: ${classificationAnswer.ticketClassification}`));
+
+    const remainingAnswers = {
+      priority: priorityAnswer.priority,
+      ticketClassification: classificationAnswer.ticketClassification
+    };
+
+    // Combine all data
+    const ticketData = {
       ...basicAnswers,
       components: selectedComponents,
       availableComponents: components,  // Include for dry run simulation
+      status: selectedStatus,
+      availableStatuses: statuses,  // Include for dry run simulation
+      assignee: selectedAssignee,
+      availableAssignees: assignees,  // Include for dry run simulation
+      currentUser: currentUser,  // Include for dry run simulation
       ...remainingAnswers
     };
+
+    // Don't clear screen - let user see the flow
+
+    console.log(chalk.blue('🎫 Jira Ticket Creator\n'));
+    console.log(chalk.green('✅ All data collected successfully!\n'));
+    console.log(chalk.white(`Work Type: ${basicAnswers.workType}`));
+    console.log(chalk.white(`Summary: ${basicAnswers.summary}`));
+    console.log(chalk.white(`Description: ${basicAnswers.description.substring(0, 80)}${basicAnswers.description.length > 80 ? '...' : ''}`));
+    if (selectedComponents.length > 0) {
+      console.log(chalk.white(`Components:`));
+      selectedComponents.forEach(comp => console.log(chalk.white(`  • ${comp}`)));
+    } else {
+      console.log(chalk.white(`Components: none`));
+    }
+    console.log(chalk.white(`Status: ${selectedStatus ? selectedStatus.name : 'default'}`));
+    console.log(chalk.white(`Assignee: ${selectedAssignee ? (selectedAssignee.displayName || 'Assign myself') : 'unassigned'}`));
+    console.log(chalk.white(`Priority: ${remainingAnswers.priority}`));
+    console.log(chalk.white(`Classification: ${remainingAnswers.ticketClassification}`));
+
+    return ticketData;
+  }
+
+  async selectStatus(availableStatuses, ticketData, isDryRun = false) {
+    // Organize statuses with recent ones first
+    const { recentStatuses, otherStatuses } = this.organizeStatuses(availableStatuses);
+
+    // Build choices list
+    const choices = [];
+
+    // Add "Leave as default" option at the top
+    choices.push('Leave as default (created status)');
+
+    // Add recent statuses if any exist
+    if (recentStatuses.length > 0) {
+      choices.push(new inquirer.Separator('--- Recently Used ---'));
+      recentStatuses.forEach(status => {
+        choices.push({
+          name: status.name,
+          value: status
+        });
+      });
+    }
+
+    // Add other statuses
+    if (otherStatuses.length > 0) {
+      choices.push(new inquirer.Separator('--- Other Statuses ---'));
+      otherStatuses.forEach(status => {
+        choices.push({
+          name: status.name,
+          value: status
+        });
+      });
+    }
+
+    // Re-print the CLI header and previous questions context
+    console.log(chalk.blue('🎫 Jira Ticket Creator\n'));
+    console.log(chalk.green(`✓ Work type: ${ticketData.workType}`));
+    console.log(chalk.green(`✓ Summary: ${ticketData.summary.substring(0, 50)}${ticketData.summary.length > 50 ? '...' : ''}`));
+    console.log(chalk.green(`✓ Description: ${ticketData.description.substring(0, 60)}${ticketData.description.length > 60 ? '...' : ''}`));
+    console.log(chalk.green(`✓ Components: ${ticketData.components ? ticketData.components.join(', ') : 'none selected'}\n`));
+
+    const { selectedStatus } = await inquirer.prompt([{
+      type: 'list',
+      name: 'selectedStatus',
+      message: '5) Select initial status:',
+      choices: choices,
+      pageSize: this.config?.ui?.pageSize || 10,
+      loop: false
+    }]);
+
+    if (selectedStatus === 'Leave as default (created status)') {
+      return null;
+    }
+
+    // Update usage tracking only if not in dry run
+    if (!isDryRun) {
+      this.updateStatusUsage(selectedStatus.name);
+    }
+
+    return selectedStatus;
+  }
+
+  async selectAssignee(availableAssignees, currentUser, ticketData, isDryRun = false) {
+    // Organize assignees with recent ones first (excluding current user from recent)
+    const { recentAssignees, otherAssignees } = this.organizeAssignees(availableAssignees, currentUser);
+
+    // Build choices list with autocomplete
+    const choices = [];
+
+    // Add "Assign myself" option at the very top
+    choices.push({
+      name: `Assign myself (${currentUser.displayName})`,
+      value: currentUser
+    });
+
+    // Add "Leave unassigned" option
+    choices.push('Leave unassigned');
+
+    // Add recent assignees if any exist
+    if (recentAssignees.length > 0) {
+      choices.push(new inquirer.Separator('--- Recently Used ---'));
+      recentAssignees.forEach(assignee => {
+        if (assignee && assignee.displayName && assignee.displayName !== 'undefined') {
+          choices.push({
+            name: `${assignee.displayName} (${assignee.emailAddress || 'no email'})`,
+            value: assignee
+          });
+        }
+      });
+    }
+
+    // Add other assignees
+    if (otherAssignees.length > 0) {
+      choices.push(new inquirer.Separator('--- Other Assignees ---'));
+      otherAssignees.forEach(assignee => {
+        if (assignee && assignee.displayName && assignee.displayName !== 'undefined') {
+          choices.push({
+            name: `${assignee.displayName} (${assignee.emailAddress || 'no email'})`,
+            value: assignee
+          });
+        }
+      });
+    }
+
+    // Use custom autocomplete prompt for assignees
+    const selectedAssignee = await this.customAssigneePrompt(choices, ticketData, currentUser);
+
+    // Re-render context after assignee selection (since cleanup cleared screen)
+    console.log(chalk.blue('🎫 Jira Ticket Creator\n'));
+    console.log(chalk.green(`✓ Work type: ${ticketData.workType}`));
+    console.log(chalk.green(`✓ Summary: ${ticketData.summary.substring(0, 50)}${ticketData.summary.length > 50 ? '...' : ''}`));
+    console.log(chalk.green(`✓ Description: ${ticketData.description.substring(0, 60)}${ticketData.description.length > 60 ? '...' : ''}`));
+    if (ticketData.components && ticketData.components.length > 0) {
+      console.log(chalk.green(`✓ Components:`));
+      ticketData.components.forEach(comp => console.log(chalk.green(`    • ${comp}`)));
+    } else {
+      console.log(chalk.green(`✓ Components: none selected`));
+    }
+    console.log(chalk.green(`✓ Status: ${ticketData.status ? ticketData.status.name : 'default (created status)'}`));
+
+    // Show selection confirmation
+    if (selectedAssignee === 'Leave unassigned') {
+      console.log(chalk.green('✓ Assignee: unassigned'));
+      console.log(''); // Add spacing
+      return null;
+    } else {
+      console.log(chalk.green(`✓ Assignee: ${selectedAssignee.displayName}`));
+      console.log(''); // Add spacing
+    }
+
+    // Update usage tracking only if not in dry run and not current user
+    if (!isDryRun && selectedAssignee && selectedAssignee.accountId !== currentUser.accountId) {
+      this.updateAssigneeUsage(selectedAssignee.displayName);
+    }
+
+    return selectedAssignee;
   }
 
   async selectComponents(availableComponents, ticketData, isDryRun = false) {
@@ -456,6 +876,170 @@ class JiraTicketCLI {
     }
 
     return selectedComponents;
+  }
+
+  async customAssigneePrompt(choices, ticketData, currentUser) {
+    return new Promise((resolve) => {
+      let selectedIndex = 0;
+      let filteredChoices = [...choices];
+      let searchTerm = '';
+
+      const nonSelectableItems = ['--- Recently Used ---', '--- Other Assignees ---'];
+
+      const render = () => {
+        // Only clear for the assignee menu (where it's needed for filtering)
+        process.stdout.write('\x1B[2J\x1B[0f'); // Clear screen and move to top
+
+            // Re-print the CLI header and previous questions context
+    console.log(chalk.blue('🎫 Jira Ticket Creator\n'));
+    console.log(chalk.green(`✓ Work type: ${ticketData.workType}`));
+    console.log(chalk.green(`✓ Summary: ${ticketData.summary.substring(0, 50)}${ticketData.summary.length > 50 ? '...' : ''}`));
+    console.log(chalk.green(`✓ Description: ${ticketData.description.substring(0, 60)}${ticketData.description.length > 60 ? '...' : ''}`));
+            if (ticketData.components && ticketData.components.length > 0) {
+          console.log(chalk.green(`✓ Components:`));
+          ticketData.components.forEach(comp => console.log(chalk.green(`    • ${comp}`)));
+        } else {
+          console.log(chalk.green(`✓ Components: none selected`));
+        }
+    console.log(chalk.green(`✓ Status: ${ticketData.status ? ticketData.status.name : 'default (created status)'}`));
+
+                console.log('6) Select assignee (type to filter, Enter to select):');
+        if (searchTerm) {
+          console.log(chalk.gray(`   Filtering: "${searchTerm}"`));
+        }
+        console.log('');
+
+        const pageSize = this.config?.ui?.pageSize || 10;
+        const startIndex = Math.max(0, selectedIndex - Math.floor(pageSize / 2));
+        const endIndex = Math.min(filteredChoices.length, startIndex + pageSize);
+
+        for (let i = startIndex; i < endIndex; i++) {
+          const choice = filteredChoices[i];
+          const isSelected = i === selectedIndex;
+          const isNonSelectable = typeof choice === 'string' && nonSelectableItems.includes(choice);
+
+          let displayText;
+
+          // Handle different choice types
+          if (choice && choice.constructor && choice.constructor.name === 'Separator') {
+            // This is a separator
+            displayText = choice.separator || choice.line || '--- Separator ---';
+            console.log(chalk.gray(`   ${displayText}`));
+            continue; // Skip selection logic for separators
+          } else if (typeof choice === 'object' && choice.name) {
+            displayText = choice.name;
+          } else if (typeof choice === 'string') {
+            displayText = choice;
+          } else {
+            displayText = `UNKNOWN: ${JSON.stringify(choice)}`;
+          }
+
+          if (isNonSelectable) {
+            // Non-selectable header
+            console.log(chalk.gray(`   ${displayText}`));
+          } else if (isSelected) {
+            console.log(chalk.blue(`❯ ${displayText}`));
+          } else {
+            console.log(`  ${displayText}`);
+          }
+        }
+
+        if (endIndex < filteredChoices.length) {
+          console.log(chalk.gray(`   ... and ${filteredChoices.length - endIndex} more`));
+        }
+      };
+
+            const filterChoices = () => {
+        if (!searchTerm) {
+          filteredChoices = [...choices];
+        } else {
+          filteredChoices = choices.filter(choice => {
+            if (typeof choice === 'string') {
+              return nonSelectableItems.includes(choice) ||
+                     choice.toLowerCase().includes(searchTerm.toLowerCase());
+            }
+            return choice && choice.name && choice.name.toLowerCase().includes(searchTerm.toLowerCase());
+          });
+        }
+
+
+
+                // Ensure selectedIndex is on a selectable item
+        if (selectedIndex >= filteredChoices.length) {
+          selectedIndex = filteredChoices.length - 1;
+        }
+        while (selectedIndex >= 0 &&
+               (typeof filteredChoices[selectedIndex] === 'string' && nonSelectableItems.includes(filteredChoices[selectedIndex]) ||
+                filteredChoices[selectedIndex] && filteredChoices[selectedIndex].constructor && filteredChoices[selectedIndex].constructor.name === 'Separator')) {
+          selectedIndex++;
+          if (selectedIndex >= filteredChoices.length) {
+            selectedIndex = 0;
+          }
+        }
+      };
+
+      const cleanup = () => {
+        process.stdin.setRawMode(false);
+        process.stdin.removeAllListeners('data');
+        process.stdin.pause();
+
+        // Clear screen to remove the assignee menu
+        process.stdout.write('\x1B[2J\x1B[0f');
+      };
+
+      process.stdin.setRawMode(true);
+      process.stdin.resume();
+
+      filterChoices();
+      render();
+
+      process.stdin.on('data', (data) => {
+        const key = data.toString();
+
+        if (key === '\r' || key === '\n') { // Enter
+          const selectedChoice = filteredChoices[selectedIndex];
+          if (selectedChoice &&
+              !(typeof selectedChoice === 'string' && nonSelectableItems.includes(selectedChoice))) {
+            cleanup();
+            resolve(selectedChoice === 'Leave unassigned' ? selectedChoice : selectedChoice.value || selectedChoice);
+            return;
+          }
+                } else if (key === '\x1b[A') { // Up arrow
+          selectedIndex = Math.max(0, selectedIndex - 1);
+          // Skip non-selectable items and separators
+          while (selectedIndex >= 0 &&
+                 (typeof filteredChoices[selectedIndex] === 'string' && nonSelectableItems.includes(filteredChoices[selectedIndex]) ||
+                  filteredChoices[selectedIndex] && filteredChoices[selectedIndex].constructor && filteredChoices[selectedIndex].constructor.name === 'Separator')) {
+            selectedIndex--;
+          }
+          if (selectedIndex < 0) selectedIndex = 0;
+          render();
+        } else if (key === '\x1b[B') { // Down arrow
+          selectedIndex = Math.min(filteredChoices.length - 1, selectedIndex + 1);
+          // Skip non-selectable items and separators
+          while (selectedIndex < filteredChoices.length &&
+                 (typeof filteredChoices[selectedIndex] === 'string' && nonSelectableItems.includes(filteredChoices[selectedIndex]) ||
+                  filteredChoices[selectedIndex] && filteredChoices[selectedIndex].constructor && filteredChoices[selectedIndex].constructor.name === 'Separator')) {
+            selectedIndex++;
+          }
+          if (selectedIndex >= filteredChoices.length) selectedIndex = filteredChoices.length - 1;
+          render();
+        } else if (key === '\x7f' || key === '\b') { // Backspace
+          if (searchTerm.length > 0) {
+            searchTerm = searchTerm.slice(0, -1);
+            filterChoices();
+            render();
+          }
+        } else if (key === '\x03') { // Ctrl+C
+          cleanup();
+          process.exit(0);
+        } else if (key.length === 1 && key >= ' ') { // Regular character
+          searchTerm += key;
+          filterChoices();
+          render();
+        }
+      });
+    });
   }
 
   async customAutocompletePrompt({ message, choices, pageSize = 10, nonSelectableItems = [], ticketData = {}, selectedComponents = [] }) {
@@ -588,7 +1172,12 @@ class JiraTicketCLI {
         console.log(chalk.green(`✓ Work type: ${ticketData.workType || 'Task'}`));
         console.log(chalk.green(`✓ Summary: ${truncateText(ticketData.summary)}`));
         console.log(chalk.green(`✓ Description: ${truncateText(ticketData.description, 60)}`));
-        console.log(chalk.green(`✓ Components: ${selectedComponents.length > 0 ? selectedComponents.join(', ') : 'none selected'}\n`));
+        if (selectedComponents && selectedComponents.length > 0) {
+          console.log(chalk.green(`✓ Components:`));
+          selectedComponents.forEach(comp => console.log(chalk.green(`    • ${comp}`)));
+        } else {
+          console.log(chalk.green(`✓ Components: none selected`));
+        }
       };
 
       // Initial display
@@ -611,9 +1200,9 @@ class JiraTicketCLI {
             const selectedChoice = filteredChoices[selectedIndex];
             // Don't allow selection of non-selectable items
             if (!nonSelectableItems.includes(selectedChoice)) {
-              cleanup();
+            cleanup();
               resolve(selectedChoice);
-              return;
+            return;
             }
           }
         }
@@ -655,18 +1244,18 @@ class JiraTicketCLI {
     });
   }
 
-  simulateAllConfigChanges(selectedComponents, availableComponents) {
+  simulateAllConfigChanges(ticketData) {
     // Create a deep copy of the current config
     const simulatedConfig = JSON.parse(JSON.stringify(this.config));
     let hasChanges = false;
 
-    // 1. Simulate cleanup (regardless of enabled state - show what would happen if enabled)
-    if (simulatedConfig.componentUsage) {
+    // 1. Simulate component cleanup and updates
+    if (simulatedConfig.componentUsage && ticketData.availableComponents) {
       const originalUsageCount = Object.keys(simulatedConfig.componentUsage).length;
 
       // Remove components that no longer exist in the project
       for (const componentName of Object.keys(simulatedConfig.componentUsage)) {
-        if (!availableComponents.includes(componentName)) {
+        if (!ticketData.availableComponents.includes(componentName)) {
           delete simulatedConfig.componentUsage[componentName];
           hasChanges = true;
         }
@@ -687,19 +1276,19 @@ class JiraTicketCLI {
 
       // Check if cleanup removed any items
       const newUsageCount = Object.keys(simulatedConfig.componentUsage).length;
-      if (newUsageCount !== originalUsageCount) {
+      if (originalUsageCount !== newUsageCount) {
         hasChanges = true;
       }
     }
 
-    // 2. Simulate component usage updates (if components were selected)
-    if (selectedComponents && selectedComponents.length > 0) {
+    // 2. Simulate usage updates for components
+    if (simulatedConfig.componentTracking?.enabled && ticketData.components) {
       if (!simulatedConfig.componentUsage) {
         simulatedConfig.componentUsage = {};
       }
 
       const now = new Date().toISOString();
-      for (const componentName of selectedComponents) {
+      for (const componentName of ticketData.components) {
         const existing = simulatedConfig.componentUsage[componentName];
         simulatedConfig.componentUsage[componentName] = {
           lastUsed: now,
@@ -709,26 +1298,125 @@ class JiraTicketCLI {
       }
     }
 
+    // 3. Simulate status cleanup and updates
+    if (simulatedConfig.statusUsage && ticketData.availableStatuses) {
+      const originalStatusUsageCount = Object.keys(simulatedConfig.statusUsage).length;
+      const availableStatusNames = new Set(ticketData.availableStatuses.map(s => s.name));
+
+      // Remove statuses that no longer exist or are too old
+      const statusRecentDays = simulatedConfig.statusTracking?.recentDays || 30;
+      const statusCutoffDate = new Date();
+      statusCutoffDate.setDate(statusCutoffDate.getDate() - statusRecentDays);
+
+      for (const [statusName, usage] of Object.entries(simulatedConfig.statusUsage)) {
+        const isOld = new Date(usage.lastUsed) < statusCutoffDate;
+        const isNonExistent = !availableStatusNames.has(statusName);
+
+        if (isOld || isNonExistent) {
+          delete simulatedConfig.statusUsage[statusName];
+          hasChanges = true;
+        }
+      }
+    }
+
+    // 4. Simulate usage updates for status
+    if (simulatedConfig.statusTracking?.enabled && ticketData.status) {
+      if (!simulatedConfig.statusUsage) {
+        simulatedConfig.statusUsage = {};
+      }
+
+      const now = new Date().toISOString();
+      const existing = simulatedConfig.statusUsage[ticketData.status.name];
+      simulatedConfig.statusUsage[ticketData.status.name] = {
+        lastUsed: now,
+        count: existing ? existing.count + 1 : 1
+      };
+      hasChanges = true;
+    }
+
+    // 5. Simulate assignee cleanup and updates
+    if (simulatedConfig.assigneeUsage && ticketData.availableAssignees) {
+      const originalAssigneeUsageCount = Object.keys(simulatedConfig.assigneeUsage).length;
+      const availableAssigneeNames = new Set(ticketData.availableAssignees.map(a => a.displayName));
+
+      // Remove assignees that no longer exist or are too old
+      const assigneeRecentDays = simulatedConfig.assigneeTracking?.recentDays || 30;
+      const assigneeCutoffDate = new Date();
+      assigneeCutoffDate.setDate(assigneeCutoffDate.getDate() - assigneeRecentDays);
+
+      for (const [assigneeName, usage] of Object.entries(simulatedConfig.assigneeUsage)) {
+        const isOld = new Date(usage.lastUsed) < assigneeCutoffDate;
+        const isNonExistent = !availableAssigneeNames.has(assigneeName);
+
+        if (isOld || isNonExistent) {
+          delete simulatedConfig.assigneeUsage[assigneeName];
+          hasChanges = true;
+        }
+      }
+    }
+
+    // 6. Simulate usage updates for assignee
+    if (simulatedConfig.assigneeTracking?.enabled && ticketData.assignee && ticketData.currentUser &&
+        ticketData.assignee.accountId !== ticketData.currentUser.accountId) {
+      if (!simulatedConfig.assigneeUsage) {
+        simulatedConfig.assigneeUsage = {};
+      }
+
+      const now = new Date().toISOString();
+      const existing = simulatedConfig.assigneeUsage[ticketData.assignee.displayName];
+      simulatedConfig.assigneeUsage[ticketData.assignee.displayName] = {
+        lastUsed: now,
+        count: existing ? existing.count + 1 : 1
+      };
+      hasChanges = true;
+    }
+
     return hasChanges ? simulatedConfig : null;
   }
 
   async showDryRun(ticketData) {
     console.log(chalk.yellow('\n🔍 DRY RUN MODE - No ticket will be created\n'));
 
-    console.log(chalk.cyan('Ticket Data:'));
-    console.log(chalk.white(JSON.stringify(ticketData, null, 2)));
+    console.log(chalk.cyan('Ticket Summary:'));
+    console.log(chalk.white(`  Work Type: ${ticketData.workType}`));
+    console.log(chalk.white(`  Summary: ${ticketData.summary}`));
+    console.log(chalk.white(`  Description: ${ticketData.description.substring(0, 100)}${ticketData.description.length > 100 ? '...' : ''}`));
+    if (ticketData.components && ticketData.components.length > 0) {
+      console.log(chalk.white(`  Components:`));
+      ticketData.components.forEach(comp => console.log(chalk.white(`    • ${comp}`)));
+    } else {
+      console.log(chalk.white(`  Components: none`));
+    }
+    console.log(chalk.white(`  Status: ${ticketData.status ? ticketData.status.name : 'default (created status)'}`));
+    console.log(chalk.white(`  Assignee: ${ticketData.assignee ? ticketData.assignee.displayName : 'unassigned'}`));
+    console.log(chalk.white(`  Priority: ${ticketData.priority}`));
+    console.log(chalk.white(`  Classification: ${ticketData.ticketClassification}`));
 
-    console.log(chalk.cyan('\nJira API Call that would be made:'));
+
+
+    console.log(chalk.cyan('\nJira API Calls that would be made:'));
+
+    // 1. Create ticket call
     const apiCall = this.jiraService.buildCreateTicketPayload(ticketData, this.config);
-    console.log(chalk.white('POST'), chalk.blue(`${this.config.jiraUrl}/rest/api/3/issue`));
-    console.log(chalk.white('Headers:'));
-    console.log(chalk.white('  Authorization: Basic [REDACTED]'));
-    console.log(chalk.white('  Content-Type: application/json'));
-    console.log(chalk.white('Payload:'));
+    console.log(chalk.white('1. CREATE TICKET:'));
+    console.log(chalk.white('   POST'), chalk.blue(`${this.config.jiraUrl}/rest/api/3/issue`));
+    console.log(chalk.white('   Payload:'));
     console.log(chalk.white(JSON.stringify(apiCall, null, 2)));
 
+    // 2. Status transition call (if status selected)
+    if (ticketData.status) {
+      console.log(chalk.white('\n2. SET STATUS:'));
+      console.log(chalk.white('   POST'), chalk.blue(`${this.config.jiraUrl}/rest/api/3/issue/[TICKET-KEY]/transitions`));
+      console.log(chalk.white('   Payload:'));
+      console.log(chalk.white(JSON.stringify({
+        transition: {
+          id: ticketData.status.id.toString()
+        }
+      }, null, 2)));
+    }
+
         // Show what changes would be made to .jirarc
-    const simulatedConfig = this.simulateAllConfigChanges(ticketData.components, ticketData.availableComponents);
+    const simulatedConfig = this.simulateAllConfigChanges(ticketData);
 
     console.log(chalk.cyan('\n.jirarc changes that would be made:'));
 
@@ -737,20 +1425,28 @@ class JiraTicketCLI {
       console.log(chalk.white('Before:'));
       console.log(chalk.gray(JSON.stringify({
         componentTracking: this.config.componentTracking || {},
-        componentUsage: this.config.componentUsage || {}
+        componentUsage: this.config.componentUsage || {},
+        statusTracking: this.config.statusTracking || {},
+        statusUsage: this.config.statusUsage || {},
+        assigneeTracking: this.config.assigneeTracking || {},
+        assigneeUsage: this.config.assigneeUsage || {}
       }, null, 2)));
 
       // Show the simulated state
       console.log(chalk.white('\nAfter:'));
       console.log(chalk.white(JSON.stringify({
         componentTracking: simulatedConfig.componentTracking || {},
-        componentUsage: simulatedConfig.componentUsage || {}
+        componentUsage: simulatedConfig.componentUsage || {},
+        statusTracking: simulatedConfig.statusTracking || {},
+        statusUsage: simulatedConfig.statusUsage || {},
+        assigneeTracking: simulatedConfig.assigneeTracking || {},
+        assigneeUsage: simulatedConfig.assigneeUsage || {}
       }, null, 2)));
 
       // Show summary of changes
       const changes = [];
 
-      // Check for cleanup changes
+      // Check for component cleanup changes
       const originalUsageKeys = Object.keys(this.config.componentUsage || {});
       const simulatedUsageKeys = Object.keys(simulatedConfig.componentUsage || {});
       const removedComponents = originalUsageKeys.filter(key => !simulatedUsageKeys.includes(key));
@@ -759,9 +1455,38 @@ class JiraTicketCLI {
         changes.push(`Removed old/non-existent components: ${removedComponents.join(', ')}`);
       }
 
+      // Check for status cleanup changes
+      const originalStatusKeys = Object.keys(this.config.statusUsage || {});
+      const simulatedStatusKeys = Object.keys(simulatedConfig.statusUsage || {});
+      const removedStatuses = originalStatusKeys.filter(key => !simulatedStatusKeys.includes(key));
+
+      if (removedStatuses.length > 0) {
+        changes.push(`Removed old/non-existent statuses: ${removedStatuses.join(', ')}`);
+      }
+
+      // Check for assignee cleanup changes
+      const originalAssigneeKeys = Object.keys(this.config.assigneeUsage || {});
+      const simulatedAssigneeKeys = Object.keys(simulatedConfig.assigneeUsage || {});
+      const removedAssignees = originalAssigneeKeys.filter(key => !simulatedAssigneeKeys.includes(key));
+
+      if (removedAssignees.length > 0) {
+        changes.push(`Removed old/non-existent assignees: ${removedAssignees.join(', ')}`);
+      }
+
       // Check for new/updated components
       if (ticketData.components && ticketData.components.length > 0) {
-        changes.push(`Updated usage for: ${ticketData.components.join(', ')}`);
+        changes.push(`Updated component usage for: ${ticketData.components.length} component(s)`);
+      }
+
+      // Check for new/updated status
+      if (ticketData.status) {
+        changes.push(`Updated status usage for: ${ticketData.status.name}`);
+      }
+
+      // Check for new/updated assignee
+      if (ticketData.assignee && ticketData.currentUser &&
+          ticketData.assignee.accountId !== ticketData.currentUser.accountId) {
+        changes.push(`Updated assignee usage for: ${ticketData.assignee.displayName}`);
       }
 
       if (changes.length > 0) {
@@ -795,6 +1520,8 @@ class JiraTicketCLI {
 
       // Save component usage after successful ticket creation
       await this.saveComponentUsage();
+      await this.saveStatusUsage();
+      await this.saveAssigneeUsage();
 
       console.log(chalk.green('\n✅ Ticket Created:'));
       console.log(chalk.white(`Key: ${result.key}`));
@@ -830,9 +1557,9 @@ class JiraTicketCLI {
 
       // Test component fetching
       const componentSpinner = ora('Testing component access...').start();
-      const components = await this.jiraService.getProjectComponents(this.config);
-      componentSpinner.succeed(`Found ${components.length} components in project`);
-      console.log(chalk.white(`Components: ${components.slice(0, 3).join(', ')}${components.length > 3 ? '...' : ''}`));
+        const components = await this.jiraService.getProjectComponents(this.config);
+        componentSpinner.succeed(`Found ${components.length} components in project`);
+        console.log(chalk.white(`Components: ${components.slice(0, 3).join(', ')}${components.length > 3 ? '...' : ''}`));
 
     } catch (error) {
       console.error(chalk.red('Connection failed:'), error.message);

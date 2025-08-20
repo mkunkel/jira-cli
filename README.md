@@ -150,6 +150,9 @@ The CLI looks for configuration in this order:
   "ui": {
     "pageSize": 10
   },
+  "api": {
+    "assigneePageSize": 1000
+  },
   "componentTracking": {
     "recentDays": 30,
     "enabled": true
@@ -370,6 +373,29 @@ Example configurations:
 ```json
 "ui": {
   "pageSize": 15   // Show 15 items at once
+}
+```
+
+### API Configuration
+The `api` section in `.jirarc` controls API performance settings:
+
+#### Assignee Page Size
+The `api.assigneePageSize` setting controls how many assignees are fetched per API call:
+- **Default**: 1000 users per request (increased from 100)
+- **Range**: 1-1000 (Jira API limit)
+- **Benefit**: Larger page sizes reduce the number of API calls for organizations with many users
+- **Performance**: For organizations with 5000+ users, this reduces API calls from 50+ to 5+
+
+```json
+"api": {
+  "assigneePageSize": 1000   // Fetch 1000 users per API call
+}
+```
+
+For smaller organizations (< 500 users), you might prefer a smaller page size:
+```json
+"api": {
+  "assigneePageSize": 500    // Fetch 500 users per API call
 }
 ```
 
