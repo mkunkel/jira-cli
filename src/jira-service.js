@@ -342,12 +342,6 @@ class JiraService {
 
     try {
       const response = await this.client.post('/rest/api/3/issue', payload);
-
-      // If status was provided, transition the ticket after creation
-      if (ticketData.status) {
-        await this.transitionTicket(response.data.key, ticketData.status.id, config);
-      }
-
       return response.data;
     } catch (error) {
       if (error.response) {
@@ -363,20 +357,43 @@ class JiraService {
     }
   }
 
-  async transitionTicket(issueKey, statusId, config) {
+  async transitionTicket(issueKey, targetStatusName, config) {
     if (!this.client) {
       this.initializeClient(config);
     }
 
     try {
-      await this.client.post(`/rest/api/3/issue/${issueKey}/transitions`, {
+      // First, get available transitions for this specific issue
+      const transitionsResponse = await this.client.get(`/rest/api/3/issue/${issueKey}/transitions`);
+
+      // Find the transition that leads to our target status
+      const targetTransition = transitionsResponse.data.transitions.find(
+        transition => transition.to.name === targetStatusName
+      );
+
+      if (!targetTransition) {
+        throw new Error(`No transition available to status "${targetStatusName}". Available transitions: ${transitionsResponse.data.transitions.map(t => `"${t.to.name}"`).join(', ')}`);
+      }
+
+      const payload = {
         transition: {
-          id: statusId.toString()
+          id: targetTransition.id.toString()
         }
-      });
+      };
+
+      await this.client.post(`/rest/api/3/issue/${issueKey}/transitions`, payload);
+
     } catch (error) {
-      // Don't fail the whole ticket creation if status transition fails
-      console.log(chalk.yellow(`Warning: Could not set status on ticket ${issueKey}: ${error.message}`));
+      if (error.response) {
+        const errorMessage = error.response.data.errors
+          ? Object.values(error.response.data.errors).join(', ')
+          : error.response.data.errorMessages?.join(', ') || 'Unknown API error';
+        throw new Error(`Status transition failed: ${errorMessage}`);
+      } else if (error.request) {
+        throw new Error('Network error: Unable to reach Jira API for status transition');
+      } else {
+        throw new Error(`Status transition error: ${error.message}`);
+      }
     }
   }
 
@@ -426,11 +443,19 @@ class JiraService {
 
     try {
       const response = await this.client.get(`/rest/api/3/project/${config.projectKey}/statuses`);
+
       // Extract statuses from all issue types and deduplicate
       const allStatuses = [];
+      const statusMap = new Map(); // Use Map to better track duplicates
+
       response.data.forEach(issueType => {
         issueType.statuses.forEach(status => {
-          if (!allStatuses.find(s => s.id === status.id)) {
+          const key = `${status.id}-${status.name}`;
+          if (!statusMap.has(key)) {
+            statusMap.set(key, {
+              id: status.id,
+              name: status.name
+            });
             allStatuses.push({
               id: status.id,
               name: status.name
@@ -438,6 +463,7 @@ class JiraService {
           }
         });
       });
+
       return allStatuses;
     } catch (error) {
       if (error.response?.status === 404) {

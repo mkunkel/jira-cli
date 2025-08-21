@@ -1787,12 +1787,7 @@ class JiraTicketCLI {
     if (ticketData.status) {
       console.log(chalk.white('\n2. SET STATUS:'));
       console.log(chalk.white('   POST'), chalk.blue(`${this.config.jiraUrl}/rest/api/3/issue/[TICKET-KEY]/transitions`));
-      console.log(chalk.white('   Payload:'));
-      console.log(chalk.white(JSON.stringify({
-        transition: {
-          id: ticketData.status.id.toString()
-        }
-      }, null, 2)));
+      console.log(chalk.white('   (Transition to: "' + ticketData.status.name + '")'));
     }
 
         // Show what changes would be made to .jirarc
@@ -1902,7 +1897,7 @@ class JiraTicketCLI {
       if (ticketData.status) {
         const statusSpinner = ora(`Setting status to "${ticketData.status.name}"...`).start();
         try {
-          await this.jiraService.transitionTicket(result.key, ticketData.status.id, this.config);
+          await this.jiraService.transitionTicket(result.key, ticketData.status.name, this.config);
           statusSpinner.succeed(`Status set to "${ticketData.status.name}"`);
         } catch (error) {
           statusSpinner.fail(`Failed to set status: ${error.message}`);
