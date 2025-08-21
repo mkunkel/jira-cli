@@ -8,7 +8,7 @@ A command-line interface for creating Jira tickets with interactive prompts that
 - Interactive prompts for all ticket fields in the specified order
 - Menu-based selection using arrow keys for known options
 - Configuration file support (`.jirarc`)
-- Dry run mode (`--dry-run` and `--dryrun`)
+- Preview mode with optional submit (`--dry-run` and `--dryrun`)
 - Multi-line description support
 - Component selection (multiple)
 - Custom field mapping for ticket classification
@@ -31,7 +31,7 @@ chmod +x bin/jira-ticket.js
 # Test connection (after setup)
 ./bin/jira-ticket.js --test-connection
 
-# Create a ticket (dry run)
+# Preview and optionally create a ticket
 ./bin/jira-ticket.js --dry-run
 ```
 
@@ -164,7 +164,7 @@ The CLI looks for configuration in this order:
 ## Command Line Options
 
 ```bash
-./bin/jira-ticket.js --dry-run        # Preview ticket creation without creating
+./bin/jira-ticket.js --dry-run        # Preview ticket details and optionally create
 ./bin/jira-ticket.js --dryrun         # Alias for --dry-run
 ./bin/jira-ticket.js --test-connection # Test Jira API connection
 ./bin/jira-ticket.js --list-fields    # List all Jira custom fields with IDs
@@ -196,13 +196,25 @@ The `--list-fields` command will show you:
 ./bin/jira-ticket.js
 ```
 
-### Dry Run Mode
-Preview what would be executed without creating a ticket:
+### Preview Mode with Optional Submit
+Preview the ticket details, API calls, and configuration changes, then optionally create the ticket:
 ```bash
 ./bin/jira-ticket.js --dry-run
 # or
 ./bin/jira-ticket.js --dryrun
 ```
+
+**New Interactive Flow:**
+1. **Collect all ticket data** (same as normal mode)
+2. **Show complete preview** including:
+   - Ticket summary with all fields
+   - Jira API calls that would be made
+   - Configuration changes to `.jirarc`
+3. **Prompt for confirmation**: `Would you like to create this ticket? (y/N)`
+   - **Yes**: Creates the ticket immediately
+   - **No**: Exits without creating anything
+
+This gives you the safety of a preview with the convenience of one-step creation.
 
 ### Test Connection
 ```bash

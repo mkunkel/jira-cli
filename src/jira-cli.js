@@ -34,6 +34,21 @@ class JiraTicketCLI {
       // Create the ticket or show dry run
       if (isDryRun) {
         await this.showDryRun(ticketData);
+
+        // Prompt user to optionally create the ticket after preview
+        const shouldSubmit = await inquirer.prompt([{
+          type: 'confirm',
+          name: 'submit',
+          message: 'Would you like to create this ticket?',
+          default: false
+        }]);
+
+        if (shouldSubmit.submit) {
+          console.log(chalk.blue('\n🚀 Creating ticket...'));
+          await this.createTicket(ticketData);
+        } else {
+          console.log(chalk.yellow('\n✅ Preview completed - no ticket created'));
+        }
       } else {
         await this.createTicket(ticketData);
       }
