@@ -545,23 +545,6 @@ class JiraService {
     }
   }
 
-  async transitionTicket(issueKey, statusId, config) {
-    if (!this.client) {
-      this.initializeClient(config);
-    }
-
-    try {
-      await this.client.post(`/rest/api/3/issue/${issueKey}/transitions`, {
-        transition: {
-          id: statusId.toString()
-        }
-      });
-    } catch (error) {
-      // Don't fail the whole ticket creation if status transition fails
-      console.log(chalk.yellow(`Warning: Could not set status on ticket ${issueKey}: ${error.message}`));
-    }
-  }
-
   async getAllFields(config) {
     if (!this.client) {
       this.initializeClient(config);

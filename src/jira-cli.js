@@ -1533,6 +1533,18 @@ class JiraTicketCLI {
       const result = await this.jiraService.createTicket(ticketData, this.config);
       spinner.succeed('Ticket created successfully!');
 
+      // Set status if one was selected (requires separate API call after creation)
+      if (ticketData.status) {
+        const statusSpinner = ora(`Setting status to "${ticketData.status.name}"...`).start();
+        try {
+          await this.jiraService.transitionTicket(result.key, ticketData.status.id, this.config);
+          statusSpinner.succeed(`Status set to "${ticketData.status.name}"`);
+        } catch (error) {
+          statusSpinner.fail(`Failed to set status: ${error.message}`);
+          console.log(chalk.yellow(`Warning: Status could not be applied. You may need to set it manually in Jira.`));
+        }
+      }
+
       // Save component usage after successful ticket creation
       await this.saveComponentUsage();
       await this.saveStatusUsage();
