@@ -70,6 +70,13 @@ class JiraTicketCLI {
         try {
           const configContent = await fs.readFile(configPath, 'utf8');
           this.config = JSON.parse(configContent);
+
+          // Auto-migrate config if missing sections
+          const needsMigration = await this.migrateConfig(configPath);
+          if (needsMigration) {
+            console.log(chalk.blue('ℹ️  Config updated with new tracking features'));
+          }
+
           console.log(chalk.green(`✓ Configuration loaded from: ${configPath}\n`));
           return this.config;
         } catch (error) {
@@ -82,6 +89,58 @@ class JiraTicketCLI {
     console.log(chalk.yellow('No configuration file found. Creating default configuration...\n'));
     await this.createDefaultConfig();
     return this.config;
+  }
+
+  async migrateConfig(configPath) {
+    let needsUpdate = false;
+
+    // Add missing statusTracking section
+    if (!this.config.statusTracking) {
+      this.config.statusTracking = {
+        recentDays: 30,
+        enabled: true
+      };
+      needsUpdate = true;
+    }
+
+    // Add missing statusUsage section
+    if (!this.config.statusUsage) {
+      this.config.statusUsage = {};
+      needsUpdate = true;
+    }
+
+    // Add missing assigneeTracking section
+    if (!this.config.assigneeTracking) {
+      this.config.assigneeTracking = {
+        recentDays: 30,
+        enabled: true
+      };
+      needsUpdate = true;
+    }
+
+    // Add missing assigneeUsage section
+    if (!this.config.assigneeUsage) {
+      this.config.assigneeUsage = {};
+      needsUpdate = true;
+    }
+
+    // Add missing api section or missing properties
+    if (!this.config.api) {
+      this.config.api = {
+        assigneePageSize: 1000
+      };
+      needsUpdate = true;
+    } else if (!this.config.api.assigneePageSize) {
+      this.config.api.assigneePageSize = 1000;
+      needsUpdate = true;
+    }
+
+    // Save updated config if changes were made
+    if (needsUpdate) {
+      await fs.writeFile(configPath, JSON.stringify(this.config, null, 2));
+    }
+
+    return needsUpdate;
   }
 
   async createDefaultConfig() {
@@ -620,20 +679,20 @@ class JiraTicketCLI {
 
         // Continue with remaining questions - handle individually for consistent formatting
     const priorityAnswer = await inquirer.prompt([{
-      type: 'list',
-      name: 'priority',
+        type: 'list',
+        name: 'priority',
       message: '7) Select priority:',
-      choices: [
-        'Lowest',
-        'Low',
-        'Medium',
-        'High',
-        'Highest',
-        'Blocker'
-      ],
-      default: this.config?.defaults?.priority || 'Medium',
-      loop: false,
-      pageSize: pageSize
+        choices: [
+          'Lowest',
+          'Low',
+          'Medium',
+          'High',
+          'Highest',
+          'Blocker'
+        ],
+        default: this.config?.defaults?.priority || 'Medium',
+        loop: false,
+        pageSize: pageSize
     }]);
 
     // Clear the question line and show clean checkmark
@@ -641,20 +700,20 @@ class JiraTicketCLI {
     console.log(chalk.green(`✓ Priority: ${priorityAnswer.priority}`));
 
     const classificationAnswer = await inquirer.prompt([{
-      type: 'list',
-      name: 'ticketClassification',
+        type: 'list',
+        name: 'ticketClassification',
       message: '8) Select ticket classification:',
-      choices: [
-        'Bug',
-        'Feature/Enhancement',
-        'Operations',
-        'R&D',
-        'Risk',
-        'Tech Debt'
-      ],
-      default: this.config?.defaults?.ticketClassification || 'Feature/Enhancement',
-      loop: false,
-      pageSize: pageSize
+        choices: [
+          'Bug',
+          'Feature/Enhancement',
+          'Operations',
+          'R&D',
+          'Risk',
+          'Tech Debt'
+        ],
+        default: this.config?.defaults?.ticketClassification || 'Feature/Enhancement',
+        loop: false,
+        pageSize: pageSize
     }]);
 
     // Clear the question line and show clean checkmark
