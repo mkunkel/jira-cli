@@ -628,25 +628,25 @@ class JiraTicketCLI {
     this.cleanupAssigneeUsage(assignees);
 
     // Collect basic ticket information first
-    const basicQuestions = [
-      {
-        type: 'list',
-        name: 'workType',
-        message: '1) Select work type:',
-        choices: this.config?.workTypes || [
-          'Task',
-          'Bug',
-          'Epic',
-          'Incident',
-          'Story',
-          'Initiative',
-          'Deployment Task',
-          'Feature'
-        ],
-        default: this.config?.defaults?.workType || 'Task',
-        loop: false,
-        pageSize: pageSize
-      },
+    const workType = await this.customListPrompt({
+      message: '1) Select work type:',
+      choices: this.config?.workTypes || [
+        'Task',
+        'Bug',
+        'Epic',
+        'Incident',
+        'Story',
+        'Initiative',
+        'Deployment Task',
+        'Feature'
+      ],
+      defaultValue: this.config?.defaults?.workType || 'Task',
+      pageSize: pageSize
+    });
+
+    console.log(chalk.green(`✓ Work type: ${workType}`));
+
+    const remainingQuestions = [
       {
         type: 'input',
         name: 'summary',
@@ -664,7 +664,8 @@ class JiraTicketCLI {
       }
     ];
 
-    const basicAnswers = await inquirer.prompt(basicQuestions);
+    const inputAnswers = await inquirer.prompt(remainingQuestions);
+    const basicAnswers = { workType, ...inputAnswers };
 
     // Handle components selection with autocomplete
     const selectedComponents = await this.selectComponents(components, basicAnswers, isDryRun);
@@ -678,51 +679,43 @@ class JiraTicketCLI {
     const selectedAssignee = await this.selectAssignee(assignees, currentUser, currentState, isDryRun);
 
         // Continue with remaining questions - handle individually for consistent formatting
-    const priorityAnswer = await inquirer.prompt([{
-        type: 'list',
-        name: 'priority',
+    const priorityAnswer = await this.customListPrompt({
       message: '7) Select priority:',
-        choices: [
-          'Lowest',
-          'Low',
-          'Medium',
-          'High',
-          'Highest',
-          'Blocker'
-        ],
-        default: this.config?.defaults?.priority || 'Medium',
-        loop: false,
-        pageSize: pageSize
-    }]);
+      choices: [
+        'Lowest',
+        'Low',
+        'Medium',
+        'High',
+        'Highest',
+        'Blocker'
+      ],
+      defaultValue: this.config?.defaults?.priority || 'Medium',
+      pageSize: pageSize,
+      ticketData: { ...basicAnswers, components: selectedComponents, status: selectedStatus, assignee: selectedAssignee }
+    });
 
-    // Clear the question line and show clean checkmark
-    process.stdout.write('\x1B[1A\x1B[2K'); // Move up one line and clear it
-    console.log(chalk.green(`✓ Priority: ${priorityAnswer.priority}`));
+    console.log(chalk.green(`✓ Priority: ${priorityAnswer}`));
 
-    const classificationAnswer = await inquirer.prompt([{
-        type: 'list',
-        name: 'ticketClassification',
+    const classificationAnswer = await this.customListPrompt({
       message: '8) Select ticket classification:',
-        choices: [
-          'Bug',
-          'Feature/Enhancement',
-          'Operations',
-          'R&D',
-          'Risk',
-          'Tech Debt'
-        ],
-        default: this.config?.defaults?.ticketClassification || 'Feature/Enhancement',
-        loop: false,
-        pageSize: pageSize
-    }]);
+      choices: [
+        'Bug',
+        'Feature/Enhancement',
+        'Operations',
+        'R&D',
+        'Risk',
+        'Tech Debt'
+      ],
+      defaultValue: this.config?.defaults?.ticketClassification || 'Feature/Enhancement',
+      pageSize: pageSize,
+      ticketData: { ...basicAnswers, components: selectedComponents, status: selectedStatus, assignee: selectedAssignee, priority: priorityAnswer }
+    });
 
-    // Clear the question line and show clean checkmark
-    process.stdout.write('\x1B[1A\x1B[2K'); // Move up one line and clear it
-    console.log(chalk.green(`✓ Classification: ${classificationAnswer.ticketClassification}`));
+    console.log(chalk.green(`✓ Classification: ${classificationAnswer}`));
 
     const remainingAnswers = {
-      priority: priorityAnswer.priority,
-      ticketClassification: classificationAnswer.ticketClassification
+      priority: priorityAnswer,
+      ticketClassification: classificationAnswer
     };
 
     // Combine all data
@@ -796,16 +789,15 @@ class JiraTicketCLI {
     console.log(chalk.green(`✓ Work type: ${ticketData.workType}`));
     console.log(chalk.green(`✓ Summary: ${ticketData.summary.substring(0, 50)}${ticketData.summary.length > 50 ? '...' : ''}`));
     console.log(chalk.green(`✓ Description: ${ticketData.description.substring(0, 60)}${ticketData.description.length > 60 ? '...' : ''}`));
-    console.log(chalk.green(`✓ Components: ${ticketData.components ? ticketData.components.join(', ') : 'none selected'}\n`));
+    if (ticketData.components && ticketData.components.length > 0) {
+      console.log(chalk.green(`✓ Components:`));
+      ticketData.components.forEach(comp => console.log(chalk.green(`    • ${comp}`)));
+    } else {
+      console.log(chalk.green(`✓ Components: none selected`));
+    }
+    console.log('\n');
 
-    const { selectedStatus } = await inquirer.prompt([{
-      type: 'list',
-      name: 'selectedStatus',
-      message: '5) Select initial status:',
-      choices: choices,
-      pageSize: this.config?.ui?.pageSize || 10,
-      loop: false
-    }]);
+    const selectedStatus = await this.customStatusPrompt(choices, ticketData);
 
     if (selectedStatus === 'Leave as default (created status)') {
       return null;
@@ -1021,6 +1013,8 @@ class JiraTicketCLI {
         if (endIndex < filteredChoices.length) {
           console.log(chalk.gray(`   ... and ${filteredChoices.length - endIndex} more`));
         }
+
+        console.log(chalk.gray(`\n(Type to filter, arrow keys to navigate, Escape to return to top, Enter to select)`));
       };
 
             const filterChoices = () => {
@@ -1104,6 +1098,16 @@ class JiraTicketCLI {
             filterChoices();
             render();
           }
+        } else if (key === '\x1b') { // Escape key
+          // Return to top of list
+          selectedIndex = 0;
+          // Find first selectable item
+          while (selectedIndex < filteredChoices.length &&
+                 (typeof filteredChoices[selectedIndex] === 'string' && nonSelectableItems.includes(filteredChoices[selectedIndex]) ||
+                  filteredChoices[selectedIndex] && filteredChoices[selectedIndex].constructor && filteredChoices[selectedIndex].constructor.name === 'Separator')) {
+            selectedIndex++;
+          }
+          render();
         } else if (key === '\x03') { // Ctrl+C
           cleanup();
           process.exit(0);
@@ -1111,6 +1115,284 @@ class JiraTicketCLI {
           searchTerm += key;
           filterChoices();
           render();
+        }
+      });
+    });
+  }
+
+  async customStatusPrompt(choices, ticketData) {
+    return new Promise((resolve) => {
+      let selectedIndex = 0;
+      let isActive = true;
+
+      const nonSelectableItems = ['--- Recently Used ---', '--- Other Statuses ---'];
+
+      const render = () => {
+        if (!isActive) return;
+
+        // Clear screen and move to top
+        process.stdout.write('\x1B[2J\x1B[0f');
+
+        // Re-print the CLI header and previous questions context
+        console.log(chalk.blue('🎫 Jira Ticket Creator\n'));
+        console.log(chalk.green(`✓ Work type: ${ticketData.workType}`));
+        console.log(chalk.green(`✓ Summary: ${ticketData.summary.substring(0, 50)}${ticketData.summary.length > 50 ? '...' : ''}`));
+        console.log(chalk.green(`✓ Description: ${ticketData.description.substring(0, 60)}${ticketData.description.length > 60 ? '...' : ''}`));
+        if (ticketData.components && ticketData.components.length > 0) {
+          console.log(chalk.green(`✓ Components:`));
+          ticketData.components.forEach(comp => console.log(chalk.green(`    • ${comp}`)));
+        } else {
+          console.log(chalk.green(`✓ Components: none selected`));
+        }
+
+        console.log('\n5) Select initial status:');
+        console.log('');
+
+        const pageSize = this.config?.ui?.pageSize || 10;
+        const startIndex = Math.max(0, selectedIndex - Math.floor(pageSize / 2));
+        const endIndex = Math.min(choices.length, startIndex + pageSize);
+
+        for (let i = startIndex; i < endIndex; i++) {
+          const choice = choices[i];
+          const isSelected = i === selectedIndex;
+          const isNonSelectable = typeof choice === 'string' && nonSelectableItems.includes(choice);
+
+          let displayText;
+
+          // Handle different choice types
+          if (choice && choice.constructor && choice.constructor.name === 'Separator') {
+            displayText = choice.separator || choice.line || '--- Separator ---';
+            console.log(chalk.gray(`   ${displayText}`));
+            continue;
+          } else if (typeof choice === 'object' && choice.name) {
+            displayText = choice.name;
+          } else if (typeof choice === 'string') {
+            displayText = choice;
+          } else {
+            displayText = `UNKNOWN: ${JSON.stringify(choice)}`;
+          }
+
+          if (isNonSelectable) {
+            console.log(chalk.gray(`   ${displayText}`));
+          } else if (isSelected) {
+            console.log(chalk.cyan(`❯ ${displayText}`));
+          } else {
+            console.log(`  ${displayText}`);
+          }
+        }
+
+        console.log(chalk.gray(`\n(Use arrow keys, Escape to return to top, Enter to select)`));
+      };
+
+      const cleanup = () => {
+        if (!isActive) return;
+        isActive = false;
+        process.stdin.setRawMode(false);
+        // Clear screen after selection
+        process.stdout.write('\x1B[2J\x1B[0f');
+      };
+
+      // Initial render
+      render();
+
+      // Enable raw mode for key capture
+      process.stdin.setRawMode(true);
+      process.stdin.resume();
+
+      process.stdin.on('data', (key) => {
+        if (!isActive) return;
+
+        if (key.equals(Buffer.from([3]))) { // Ctrl+C
+          cleanup();
+          process.exit(0);
+          return;
+        }
+
+        if (key.equals(Buffer.from([13]))) { // Enter
+          const selectedChoice = choices[selectedIndex];
+          // Don't allow selection of non-selectable items or separators
+          if (!nonSelectableItems.includes(selectedChoice) &&
+              (!selectedChoice || !selectedChoice.constructor || selectedChoice.constructor.name !== 'Separator')) {
+            cleanup();
+            resolve(selectedChoice === 'Leave as default (created status)' ? selectedChoice : selectedChoice.value || selectedChoice);
+            return;
+          }
+        }
+
+        if (key.equals(Buffer.from([27]))) { // Escape key
+          // Return to top of list
+          selectedIndex = 0;
+          // Find first selectable item
+          while (selectedIndex < choices.length &&
+                 (nonSelectableItems.includes(choices[selectedIndex]) ||
+                  (choices[selectedIndex] && choices[selectedIndex].constructor && choices[selectedIndex].constructor.name === 'Separator'))) {
+            selectedIndex++;
+          }
+          render();
+          return;
+        }
+
+        if (key.equals(Buffer.from([27, 91, 65]))) { // Up arrow
+          selectedIndex = Math.max(0, selectedIndex - 1);
+          // Skip non-selectable items and separators
+          while (selectedIndex >= 0 &&
+                 (nonSelectableItems.includes(choices[selectedIndex]) ||
+                  (choices[selectedIndex] && choices[selectedIndex].constructor && choices[selectedIndex].constructor.name === 'Separator'))) {
+            selectedIndex--;
+          }
+          if (selectedIndex < 0) selectedIndex = 0;
+          render();
+          return;
+        }
+
+        if (key.equals(Buffer.from([27, 91, 66]))) { // Down arrow
+          selectedIndex = Math.min(choices.length - 1, selectedIndex + 1);
+          // Skip non-selectable items and separators
+          while (selectedIndex < choices.length &&
+                 (nonSelectableItems.includes(choices[selectedIndex]) ||
+                  (choices[selectedIndex] && choices[selectedIndex].constructor && choices[selectedIndex].constructor.name === 'Separator'))) {
+            selectedIndex++;
+          }
+          if (selectedIndex >= choices.length) selectedIndex = choices.length - 1;
+          render();
+          return;
+        }
+      });
+    });
+  }
+
+  async customListPrompt({ message, choices, defaultValue, pageSize = 10, ticketData = {} }) {
+    return new Promise((resolve) => {
+      let selectedIndex = 0;
+      let isActive = true;
+
+      // Find default index if provided
+      if (defaultValue) {
+        const defaultIndex = choices.findIndex(choice => choice === defaultValue);
+        if (defaultIndex >= 0) {
+          selectedIndex = defaultIndex;
+        }
+      }
+
+      // Hide cursor
+      process.stdout.write('\x1B[?25l');
+
+      const render = () => {
+        if (!isActive) return;
+
+        // Clear screen and move to top
+        process.stdout.write('\x1B[2J\x1B[0f');
+
+        // Show CLI header
+        console.log(chalk.blue('🎫 Jira Ticket Creator\n'));
+
+        // Show context if available
+        if (ticketData.workType) {
+          console.log(chalk.green(`✓ Work type: ${ticketData.workType}`));
+        }
+        if (ticketData.summary) {
+          console.log(chalk.green(`✓ Summary: ${ticketData.summary.substring(0, 50)}${ticketData.summary.length > 50 ? '...' : ''}`));
+        }
+        if (ticketData.description) {
+          console.log(chalk.green(`✓ Description: ${ticketData.description.substring(0, 60)}${ticketData.description.length > 60 ? '...' : ''}`));
+        }
+        if (ticketData.components && ticketData.components.length > 0) {
+          console.log(chalk.green(`✓ Components:`));
+          ticketData.components.forEach(comp => console.log(chalk.green(`    • ${comp}`)));
+        } else if (ticketData.components) {
+          console.log(chalk.green(`✓ Components: none selected`));
+        }
+        if (ticketData.status) {
+          console.log(chalk.green(`✓ Status: ${ticketData.status.name || ticketData.status}`));
+        }
+        if (ticketData.assignee) {
+          console.log(chalk.green(`✓ Assignee: ${ticketData.assignee.displayName || ticketData.assignee}`));
+        }
+        if (ticketData.priority) {
+          console.log(chalk.green(`✓ Priority: ${ticketData.priority}`));
+        }
+
+        console.log('\n' + message);
+        console.log('');
+
+        // Calculate visible window
+        const totalChoices = choices.length;
+        let startIndex = 0;
+        let endIndex = Math.min(pageSize, totalChoices);
+
+        if (totalChoices > pageSize) {
+          const halfPage = Math.floor(pageSize / 2);
+          startIndex = Math.max(0, selectedIndex - halfPage);
+          endIndex = Math.min(totalChoices, startIndex + pageSize);
+
+          if (endIndex - startIndex < pageSize && totalChoices >= pageSize) {
+            startIndex = Math.max(0, endIndex - pageSize);
+          }
+        }
+
+        // Show choices
+        for (let i = startIndex; i < endIndex; i++) {
+          const isSelected = i === selectedIndex;
+          const prefix = isSelected ? chalk.cyan('❯ ') : '  ';
+          const choice = isSelected ? chalk.cyan(choices[i]) : choices[i];
+          console.log(prefix + choice);
+        }
+
+        // Show pagination info if needed
+        if (totalChoices > pageSize) {
+          console.log(chalk.gray(`\n(Use arrow keys to navigate, Escape to return to top, Enter to select)`));
+        } else {
+          console.log(chalk.gray(`\n(Use arrow keys, Escape to return to top, Enter to select)`));
+        }
+      };
+
+      const cleanup = () => {
+        if (!isActive) return;
+        isActive = false;
+        process.stdin.setRawMode(false);
+        process.stdout.write('\x1B[?25h'); // Show cursor
+        // Clear screen after selection
+        process.stdout.write('\x1B[2J\x1B[0f');
+      };
+
+      // Initial render
+      render();
+
+      // Enable raw mode for key capture
+      process.stdin.setRawMode(true);
+      process.stdin.resume();
+
+      process.stdin.on('data', (key) => {
+        if (!isActive) return;
+
+        if (key.equals(Buffer.from([3]))) { // Ctrl+C
+          cleanup();
+          process.exit(0);
+          return;
+        }
+
+        if (key.equals(Buffer.from([13]))) { // Enter
+          cleanup();
+          resolve(choices[selectedIndex]);
+          return;
+        }
+
+        if (key.equals(Buffer.from([27]))) { // Escape key
+          selectedIndex = 0;
+          render();
+          return;
+        }
+
+        if (key.equals(Buffer.from([27, 91, 65]))) { // Up arrow
+          selectedIndex = Math.max(0, selectedIndex - 1);
+          render();
+          return;
+        }
+
+        if (key.equals(Buffer.from([27, 91, 66]))) { // Down arrow
+          selectedIndex = Math.min(choices.length - 1, selectedIndex + 1);
+          render();
+          return;
         }
       });
     });
@@ -1192,6 +1474,8 @@ class JiraTicketCLI {
         } else if (totalChoices > endIndex) {
           console.log(chalk.gray(`  ... and ${totalChoices - endIndex} more`));
         }
+
+        console.log(chalk.gray(`\n(Type to filter, arrow keys to navigate, Escape to return to top, Enter to select)`));
       };
 
       const findNextSelectableIndex = (currentIndex, direction) => {
@@ -1199,9 +1483,19 @@ class JiraTicketCLI {
         let newIndex = currentIndex;
 
         for (let i = 0; i < len; i++) {
-          newIndex = direction > 0
-            ? (newIndex + 1) % len
-            : (newIndex - 1 + len) % len;
+          if (direction > 0) {
+            // Going down - stop at bottom instead of wrapping
+            newIndex = newIndex + 1;
+            if (newIndex >= len) {
+              return currentIndex; // Stay at current if we hit the bottom
+            }
+          } else {
+            // Going up - stop at top instead of wrapping
+            newIndex = newIndex - 1;
+            if (newIndex < 0) {
+              return currentIndex; // Stay at current if we hit the top
+            }
+          }
 
           if (!nonSelectableItems.includes(filteredChoices[newIndex])) {
             return newIndex;
@@ -1279,6 +1573,18 @@ class JiraTicketCLI {
             return;
             }
           }
+        }
+
+        if (key.equals(Buffer.from([27]))) { // Escape key
+          // Return to top of list
+          selectedIndex = 0;
+          // Find first selectable item
+          while (selectedIndex < filteredChoices.length &&
+                 nonSelectableItems.includes(filteredChoices[selectedIndex])) {
+            selectedIndex++;
+          }
+          render();
+          return;
         }
 
         if (key.equals(Buffer.from([27, 91, 65]))) {
