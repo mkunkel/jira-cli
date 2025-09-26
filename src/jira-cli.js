@@ -1012,6 +1012,545 @@ class JiraTicketCLI {
     }
   }
 
+  async editTicket(ticketKey) {
+    try {
+      console.log(chalk.blue('✏️  Jira Ticket Editor\n'));
+
+      // Load configuration
+      await this.loadConfig();
+
+      // Validate configuration
+      this.validateConfiguration();
+
+      // Validate token before proceeding
+      await this.validateToken();
+
+      let selectedTicket = null;
+
+      if (ticketKey) {
+        // Ticket key provided, fetch its details
+        console.log(chalk.cyan(`📋 Fetching ticket details for ${ticketKey}...`));
+        try {
+          selectedTicket = await this.jiraService.getTicketDetails(ticketKey, this.config);
+        } catch (error) {
+          console.error(chalk.red(`Error: ${error.message}`));
+          process.exit(1);
+        }
+      } else {
+        // No ticket key provided, show selection menu (reuse list logic)
+        selectedTicket = await this.selectTicketForEdit();
+      }
+
+      if (!selectedTicket) {
+        console.log(chalk.yellow('No ticket selected. Exiting.'));
+        return;
+      }
+
+      // Start the field editing loop
+      await this.editTicketFields(selectedTicket);
+
+    } catch (error) {
+      console.error(chalk.red('Error:'), error.message);
+      process.exit(1);
+    }
+  }
+
+  async selectTicketForEdit() {
+    const spinner = ora('Fetching tickets...').start();
+
+    try {
+      // Get tracked tickets from local config
+      const trackedTickets = this.config.trackedTickets || {};
+
+      // Get ALL assigned tickets from Jira (including completed ones)
+      const assignedTickets = await this.jiraService.getAllAssignedTickets(this.config);
+
+      spinner.succeed('Tickets loaded');
+
+      // Combine and deduplicate tickets (using the same sorting as list command)
+      const allTickets = this.combineTickets(trackedTickets, assignedTickets);
+
+      // Filter out old done tickets
+      const filteredTickets = this.filterOldDoneTickets(allTickets);
+
+      if (filteredTickets.length === 0) {
+        console.log(chalk.yellow('No tickets available for editing.'));
+        return null;
+      }
+
+      // Show ticket selection menu (simpler version than list)
+      const choices = filteredTickets.map(ticket => {
+        const truncatedSummary = ticket.summary.length > 80
+          ? ticket.summary.substring(0, 77) + '...'
+          : ticket.summary;
+
+        const sourceIndicator = ticket.source === 'tracked' ? '📌' : '👤';
+        const statusColor = ['Done', 'Closed', 'Resolved', 'Complete', 'Completed']
+          .some(done => ticket.status.toLowerCase().includes(done.toLowerCase()))
+          ? chalk.green : chalk.yellow;
+
+        return {
+          name: `${sourceIndicator} ${ticket.key} - ${truncatedSummary} [${statusColor(ticket.status)}]`,
+          value: ticket,
+          short: ticket.key
+        };
+      });
+
+      const answer = await inquirer.prompt([{
+        type: 'list',
+        name: 'ticket',
+        message: 'Select ticket to edit (Use arrow keys, Enter to select):',
+        choices: choices,
+        pageSize: this.config?.ui?.listPageSize || 25,
+        loop: false
+      }]);
+
+      return answer.ticket;
+
+    } catch (error) {
+      spinner.fail('Failed to fetch tickets');
+      throw error;
+    }
+  }
+
+  async editTicketFields(ticket) {
+    console.log(chalk.cyan(`\n✏️  Editing ticket: ${ticket.key}`));
+    console.log(chalk.white(`Summary: ${ticket.summary}\n`));
+
+    while (true) {
+      const spinner = ora('Fetching editable fields...').start();
+
+      try {
+        // Get editable fields from Jira
+        const editableFields = await this.jiraService.getEditableFields(ticket.key, this.config);
+
+        // Get current ticket details
+        const currentTicket = await this.jiraService.getTicketDetails(ticket.key, this.config);
+
+        spinner.succeed('Fields loaded');
+
+        // Organize fields for display
+        const organizedFields = this.organizeEditableFields(editableFields, currentTicket);
+
+        if (organizedFields.length === 0) {
+          console.log(chalk.yellow('No editable fields available for this ticket.'));
+          return;
+        }
+
+        // Show field selection menu
+        const fieldChoice = await this.showFieldSelectionMenu(organizedFields);
+
+        if (fieldChoice === 'exit') {
+          console.log(chalk.blue('✅ Editing completed'));
+          return;
+        }
+
+        // Edit the selected field
+        const editResult = await this.editSelectedField(ticket.key, fieldChoice, currentTicket);
+
+        if (editResult.updated) {
+          console.log(chalk.green(`✅ ${fieldChoice.displayName} updated successfully`));
+          console.log(chalk.blue(`🔗 View in Jira: ${this.config.jiraUrl}/browse/${ticket.key}`));
+        }
+
+        // Continue the loop to allow more edits
+
+      } catch (error) {
+        spinner.fail('Failed to fetch fields');
+        console.error(chalk.red(`Error: ${error.message}`));
+        return;
+      }
+    }
+  }
+
+  organizeEditableFields(editableFields, currentTicket) {
+    // Fields to exclude from editing (non-updatable fields)
+    const excludedFields = [
+      'Software Capitalization Project',
+      'software capitalization project',
+      'Software_Capitalization_Project'
+    ];
+
+    // Filter out excluded fields by checking field name and display name
+    const filteredEditableFields = {};
+    for (const [key, fieldMeta] of Object.entries(editableFields)) {
+      const fieldName = (fieldMeta.name || key).toLowerCase();
+      const isExcluded = excludedFields.some(excluded =>
+        fieldName.includes(excluded.toLowerCase()) ||
+        key.toLowerCase().includes(excluded.toLowerCase())
+      );
+
+      if (!isExcluded) {
+        filteredEditableFields[key] = fieldMeta;
+      }
+    }
+
+    // Define CLI creation order with Jira field mappings
+    const cliFieldOrder = [
+      { key: 'issuetype', displayName: 'Work Type' },
+      { key: 'summary', displayName: 'Summary' },
+      { key: 'description', displayName: 'Description' },
+      { key: 'components', displayName: 'Components' },
+      { key: 'priority', displayName: 'Priority' },
+      { key: this.config?.customFields?.ticketClassification, displayName: 'Ticket Classification' },
+      { key: 'assignee', displayName: 'Assignee' }
+    ].filter(field => field.key && filteredEditableFields[field.key]); // Only include if field exists and is editable
+
+    // Get remaining fields alphabetically
+    const remainingFields = Object.keys(filteredEditableFields)
+      .filter(key => !cliFieldOrder.some(cliField => cliField.key === key))
+      .sort()
+      .map(key => ({
+        key: key,
+        displayName: filteredEditableFields[key].name || key
+      }));
+
+    // Combine with CLI fields first
+    const allFields = [...cliFieldOrder, ...remainingFields];
+
+    // Add current values and field metadata
+    return allFields.map(field => {
+      const fieldMeta = filteredEditableFields[field.key];
+      const currentValue = this.getCurrentFieldValue(currentTicket, field.key);
+
+      return {
+        ...field,
+        schema: fieldMeta.schema,
+        allowedValues: fieldMeta.allowedValues,
+        currentValue: currentValue,
+        displayValue: this.formatFieldValueForDisplay(currentValue, fieldMeta)
+      };
+    });
+  }
+
+  getCurrentFieldValue(ticket, fieldKey) {
+    // Handle special field mappings
+    switch (fieldKey) {
+      case 'issuetype':
+        return ticket.workType;
+      case 'summary':
+        return ticket.summary;
+      case 'status':
+        return ticket.status;
+      case 'assignee':
+        return ticket.assignee;
+      case 'description':
+        return ticket.description ? this.extractTextFromADF(ticket.description) : '';
+      case 'components':
+        return ticket.components ? ticket.components.map(c => c.name || c) : [];
+      case 'priority':
+        return ticket.priority;
+      default:
+        // For custom fields and other fields, use the full field data
+        if (ticket.fullFields && ticket.fullFields[fieldKey]) {
+          const fieldValue = ticket.fullFields[fieldKey];
+
+          // Handle different field value formats
+          if (fieldValue && typeof fieldValue === 'object') {
+            if (fieldValue.value) return fieldValue.value;
+            if (fieldValue.name) return fieldValue.name;
+            if (fieldValue.displayName) return fieldValue.displayName;
+            if (Array.isArray(fieldValue)) return fieldValue;
+          }
+
+          return fieldValue;
+        }
+        return 'Unknown';
+    }
+  }
+
+  extractTextFromADF(adfContent) {
+    // Simple ADF to text conversion for description display
+    if (!adfContent || !adfContent.content) {
+      return '';
+    }
+
+    let text = '';
+    for (const block of adfContent.content) {
+      if (block.type === 'paragraph' && block.content) {
+        for (const inline of block.content) {
+          if (inline.type === 'text') {
+            text += inline.text;
+          }
+        }
+        text += '\n';
+      }
+    }
+
+    return text.trim();
+  }
+
+  formatFieldValueForDisplay(value, fieldMeta) {
+    if (!value || value === 'Unknown') {
+      return chalk.gray('(not set)');
+    }
+
+    if (typeof value === 'string') {
+      // Truncate long values
+      return value.length > 50 ? value.substring(0, 47) + '...' : value;
+    }
+
+    if (Array.isArray(value)) {
+      return value.length > 0 ? value.join(', ') : chalk.gray('(none)');
+    }
+
+    return String(value);
+  }
+
+  async showFieldSelectionMenu(fields) {
+    const choices = [
+      ...fields.map(field => ({
+        name: `${field.displayName}: ${field.displayValue}`,
+        value: field,
+        short: field.displayName
+      })),
+      new inquirer.Separator('─────────────────────'),
+      {
+        name: chalk.blue('← Exit editing'),
+        value: 'exit',
+        short: 'Exit'
+      }
+    ];
+
+    const answer = await inquirer.prompt([{
+      type: 'list',
+      name: 'field',
+      message: 'Select field to edit (Use arrow keys, Enter to select):',
+      choices: choices,
+      pageSize: this.config?.ui?.pageSize || 10,
+      loop: false
+    }]);
+
+    return answer.field;
+  }
+
+  async editSelectedField(ticketKey, field, currentTicket) {
+    console.log(chalk.cyan(`\n📝 Editing: ${field.displayName}`));
+    console.log(chalk.white(`Current value: ${field.displayValue}\n`));
+
+    // Handle different field types
+    let newValue;
+    const fieldType = field.schema?.type;
+
+    try {
+      switch (fieldType) {
+        case 'string':
+          newValue = await this.editStringField(field);
+          break;
+        case 'array':
+          newValue = await this.editArrayField(field);
+          break;
+        case 'option':
+          newValue = await this.editOptionField(field);
+          break;
+        case 'user':
+          newValue = await this.editUserField(field);
+          break;
+        default:
+          newValue = await this.editStringField(field); // Default to string input
+      }
+
+      if (newValue === null) {
+        console.log(chalk.yellow('❌ Edit cancelled'));
+        return { updated: false };
+      }
+
+      // Update the ticket
+      const spinner = ora(`Updating ${field.displayName}...`).start();
+
+      await this.jiraService.updateTicketField(ticketKey, field.key, newValue, this.config);
+
+      spinner.succeed(`${field.displayName} updated`);
+
+      return { updated: true, newValue };
+
+    } catch (error) {
+      console.error(chalk.red(`Failed to update ${field.displayName}: ${error.message}`));
+      return { updated: false };
+    }
+  }
+
+  async editStringField(field) {
+    // For description field, use editor
+    if (field.key === 'description') {
+      return await this.editDescriptionField(field);
+    }
+
+    const answer = await inquirer.prompt([{
+      type: 'input',
+      name: 'value',
+      message: `Enter new value for ${field.displayName} (or press Enter to cancel):`,
+      default: field.currentValue === 'Unknown' ? '' : field.currentValue
+    }]);
+
+    if (answer.value === '') {
+      const confirmCancel = await inquirer.prompt([{
+        type: 'confirm',
+        name: 'cancel',
+        message: 'Cancel editing this field?',
+        default: true
+      }]);
+
+      return confirmCancel.cancel ? null : answer.value;
+    }
+
+    return answer.value;
+  }
+
+  async editDescriptionField(field) {
+    console.log(chalk.cyan('📝 Editing Description'));
+    console.log(chalk.gray('Tip: You can use markdown formatting (bold, italic, links, etc.)'));
+
+    const answer = await inquirer.prompt([{
+      type: 'editor',
+      name: 'description',
+      message: 'Edit description (markdown supported):',
+      default: field.currentValue === 'Unknown' ? '' : field.currentValue,
+      postfix: '.md'
+    }]);
+
+    if (!answer.description || answer.description.trim() === '') {
+      const confirmCancel = await inquirer.prompt([{
+        type: 'confirm',
+        name: 'cancel',
+        message: 'Cancel editing description?',
+        default: true
+      }]);
+
+      return confirmCancel.cancel ? null : '';
+    }
+
+    // Convert markdown to ADF using existing method
+    try {
+      const adfContent = this.jiraService.createDescriptionContent(answer.description, this.config);
+      return {
+        type: "doc",
+        version: 1,
+        content: adfContent
+      };
+    } catch (error) {
+      console.warn(chalk.yellow('Warning: Could not parse markdown, using plain text'));
+      return answer.description.trim();
+    }
+  }
+
+  async editArrayField(field) {
+    // For components and other array fields
+    if (field.key === 'components') {
+      // Reuse component selection logic
+      try {
+        const components = await this.jiraService.getProjectComponents(this.config);
+
+        console.log(chalk.cyan('\n📋 Selecting Components'));
+        console.log(chalk.gray('Current components: ' + (field.currentValue.length > 0 ? field.currentValue.join(', ') : 'None')));
+
+        const selectedComponents = await this.selectComponents(components, { components: [] }, false);
+
+        if (selectedComponents.length === 0) {
+          const confirmEmpty = await inquirer.prompt([{
+            type: 'confirm',
+            name: 'empty',
+            message: 'No components selected. Clear all components from this ticket?',
+            default: false
+          }]);
+
+          if (!confirmEmpty.empty) {
+            return null; // Cancel
+          }
+        }
+
+        return selectedComponents.map(name => ({ name }));
+      } catch (error) {
+        console.error(chalk.red(`Error fetching components: ${error.message}`));
+        return null;
+      }
+    }
+
+    // Generic array editing (simplified)
+    return await this.editStringField(field);
+  }
+
+  async editOptionField(field) {
+    if (!field.allowedValues || field.allowedValues.length === 0) {
+      console.log(chalk.yellow('No options available for this field.'));
+      return null;
+    }
+
+    const choices = [
+      ...field.allowedValues.map(option => ({
+        name: option.value || option.name,
+        value: option,
+        short: option.value || option.name
+      })),
+      new inquirer.Separator('─────────────────────'),
+      {
+        name: chalk.blue('← Cancel'),
+        value: 'cancel',
+        short: 'Cancel'
+      }
+    ];
+
+    const answer = await inquirer.prompt([{
+      type: 'list',
+      name: 'option',
+      message: `Select new value for ${field.displayName}:`,
+      choices: choices,
+      pageSize: this.config?.ui?.pageSize || 10,
+      loop: false
+    }]);
+
+    return answer.option === 'cancel' ? null : answer.option;
+  }
+
+  async editUserField(field) {
+    // For assignee field
+    if (field.key === 'assignee') {
+      console.log(chalk.cyan('\n👤 Selecting Assignee'));
+      console.log(chalk.gray(`Current assignee: ${field.currentValue}`));
+
+      try {
+        const assignees = await this.jiraService.getProjectAssignees(this.config);
+        const currentUser = await this.jiraService.getCurrentUser(this.config);
+
+        const selectedAssignee = await this.selectAssignee(assignees, currentUser, { assignee: null }, false);
+
+        if (!selectedAssignee) {
+          return null; // User cancelled
+        }
+
+        return selectedAssignee;
+      } catch (error) {
+        console.error(chalk.red(`Error fetching assignees: ${error.message}`));
+
+        // Fallback to manual email entry
+        const answer = await inquirer.prompt([{
+          type: 'input',
+          name: 'email',
+          message: `Enter email for ${field.displayName} (or press Enter to cancel):`
+        }]);
+
+        if (!answer.email) {
+          return null;
+        }
+
+        return { emailAddress: answer.email };
+      }
+    }
+
+    // Generic user field handling
+    const answer = await inquirer.prompt([{
+      type: 'input',
+      name: 'email',
+      message: `Enter email for ${field.displayName} (or press Enter to cancel):`
+    }]);
+
+    if (!answer.email) {
+      return null;
+    }
+
+    return { emailAddress: answer.email };
+  }
+
   async selectTicketFromList() {
     const spinner = ora('Fetching tickets...').start();
 

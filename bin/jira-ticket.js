@@ -53,4 +53,13 @@ program
     await cli.listTickets();
   });
 
+// Edit ticket command
+program
+  .command('edit [ticketKey]')
+  .description('Edit fields of an existing ticket')
+  .action(async (ticketKey) => {
+    const cli = new JiraTicketCLI();
+    await cli.editTicket(ticketKey);
+  });
+
 program.parse();

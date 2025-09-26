@@ -759,7 +759,7 @@ class JiraService {
     try {
       const response = await this.client.get(`/rest/api/3/issue/${ticketKey}`, {
         params: {
-          fields: 'key,summary,status,assignee,issuetype,updated'
+          fields: 'key,summary,status,assignee,issuetype,updated,description,components,priority'
         }
       });
 
@@ -772,7 +772,11 @@ class JiraService {
         workType: issue.fields.issuetype.name,
         assignee: issue.fields.assignee ? issue.fields.assignee.displayName : 'Unassigned',
         updated: issue.fields.updated,
-        source: 'jira'
+        description: issue.fields.description,
+        components: issue.fields.components || [],
+        priority: issue.fields.priority ? issue.fields.priority.name : 'None',
+        source: 'jira',
+        fullFields: issue.fields // Store all fields for editing
       };
     } catch (error) {
       if (error.response?.status === 404) {
@@ -804,6 +808,54 @@ class JiraService {
         throw new Error(`Access denied to ticket ${issueKey}. You may not have permission to view transitions.`);
       } else {
         throw new Error(`Failed to fetch transitions: ${error.response?.data?.errorMessages?.[0] || error.message}`);
+      }
+    }
+  }
+
+  async getEditableFields(issueKey, config) {
+    if (!this.client) {
+      this.initializeClient(config);
+    }
+
+    try {
+      const response = await this.client.get(`/rest/api/3/issue/${issueKey}/editmeta`);
+
+      return response.data.fields;
+    } catch (error) {
+      if (error.response?.status === 404) {
+        throw new Error(`Ticket ${issueKey} not found`);
+      } else if (error.response?.status === 403) {
+        throw new Error(`Access denied to ticket ${issueKey}. You may not have permission to edit this ticket.`);
+      } else {
+        throw new Error(`Failed to fetch editable fields: ${error.response?.data?.errorMessages?.[0] || error.message}`);
+      }
+    }
+  }
+
+  async updateTicketField(issueKey, fieldKey, fieldValue, config) {
+    if (!this.client) {
+      this.initializeClient(config);
+    }
+
+    try {
+      const updatePayload = {
+        fields: {
+          [fieldKey]: fieldValue
+        }
+      };
+
+      await this.client.put(`/rest/api/3/issue/${issueKey}`, updatePayload);
+
+      return true;
+    } catch (error) {
+      if (error.response?.status === 404) {
+        throw new Error(`Ticket ${issueKey} not found`);
+      } else if (error.response?.status === 403) {
+        throw new Error(`Access denied to ticket ${issueKey}. You may not have permission to edit this ticket.`);
+      } else if (error.response?.status === 400) {
+        throw new Error(`Invalid field value: ${error.response?.data?.errorMessages?.[0] || error.message}`);
+      } else {
+        throw new Error(`Failed to update ticket: ${error.response?.data?.errorMessages?.[0] || error.message}`);
       }
     }
   }

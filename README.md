@@ -245,6 +245,24 @@ The `list` command provides:
 - **Visual Indicators**: Color coding for done/active statuses, source indicators
 - **Summary Statistics**: Total ticket counts and legend
 
+### Edit Ticket Fields
+```bash
+./bin/jira-ticket.js edit [TICKET-KEY]  # Edit fields of an existing ticket
+jira edit                               # Show ticket selection menu
+jira edit PROJ-123                     # Direct edit for specific ticket
+```
+
+The `edit` command provides:
+- **Smart Field Ordering**: CLI creation fields shown first (Work Type, Summary, Description, etc.), then alphabetical
+- **Current Value Display**: Shows existing field values before editing
+- **Type-Aware Editing**: Different input methods for strings, options, arrays, users
+- **Field Filtering**: Automatically excludes non-updatable fields (e.g., Software Capitalization Project)
+- **Back-Out Option**: Cancel field edits without updating
+- **Immediate Updates**: Ticket updated after each successful field change
+- **Continuous Editing**: Return to field list after each edit for multiple changes
+- **No Wrapping Navigation**: Clean scrolling through field lists
+- **Visual Feedback**: Clear success/failure messages and Jira links
+
 ### Preview Mode with Optional Submit
 Preview the ticket details, API calls, and configuration changes, then optionally create the ticket:
 ```bash
