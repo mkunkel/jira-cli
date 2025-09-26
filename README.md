@@ -148,7 +148,8 @@ The CLI looks for configuration in this order:
     "command": null
   },
   "ui": {
-    "pageSize": 10
+    "pageSize": 10,
+    "listPageSize": 25
   },
   "api": {
     "assigneePageSize": 1000
@@ -226,6 +227,23 @@ The `move` command provides:
 - **Status Transitions**: Change ticket status using configurable allowed statuses
 - **Local Tracking Management**: Remove tickets from local tracking
 - **Sorting**: Tickets are sorted by status priority (configurable), then by ticket number
+
+### List All Tickets
+```bash
+./bin/jira-ticket.js list               # List all user tickets grouped by status
+jira list                               # If globally installed
+```
+
+The `list` command provides:
+- **Comprehensive View**: Shows both CLI tracked tickets and all Jira assigned tickets
+- **Status Grouping**: Groups tickets by their current status with counts
+- **Smart Ordering**: Status groups ordered by your `allowedStatuses` configuration
+- **Smart Filtering**: Automatically excludes done tickets older than `doneStatusTrackingDays`
+- **Scrollable Interface**: Navigate with arrow keys, no wrap-around navigation
+- **Interactive Selection**: Click any ticket to view Jira link and optionally manage it
+- **Configurable Size**: Set `ui.listPageSize` to control visible items (default: 25)
+- **Visual Indicators**: Color coding for done/active statuses, source indicators
+- **Summary Statistics**: Total ticket counts and legend
 
 ### Preview Mode with Optional Submit
 Preview the ticket details, API calls, and configuration changes, then optionally create the ticket:
@@ -398,6 +416,7 @@ The CLI automatically tracks tickets you create and provides tools to manage the
 - **Configurable duration**: Set `ticketTracking.trackingDays` (default: 90 days)
 - **Done status tracking**: Separate duration for completed tickets via `doneStatusTrackingDays` (default: 14 days)
 - **Auto-cleanup**: Old tickets are automatically removed based on configured timeframes
+- **List filtering**: The `jira list` command automatically excludes done tickets older than `doneStatusTrackingDays`
 
 #### Status Management
 - **Allowed Statuses**: Configure `allowedStatuses` to limit transition options and control ticket sorting
@@ -429,23 +448,28 @@ Infrastructure
 ```
 
 ### UI Configuration
-The `ui.pageSize` setting in `.jirarc` controls how many items are displayed in selection menus:
+The `ui` settings in `.jirarc` control how many items are displayed in different interface contexts:
+
+#### Selection Menus (`pageSize`)
+- **Purpose**: Controls items shown in interactive selection menus (components, statuses, etc.)
 - **Default**: 10 items
 - **Range**: 1-50 items (recommended: 5-15)
 - **Behavior**: If more items exist than the pageSize, you'll need to scroll to see them
 - **Tip**: Use a smaller pageSize (5-7) to reduce wrap-around effect in component selection
 
+#### Ticket List View (`listPageSize`)
+- **Purpose**: Controls how many items are visible when browsing with `jira list`
+- **Default**: 25 items
+- **Range**: 10-100 items (recommended: 20-50)
+- **Behavior**: Larger values show more tickets at once, smaller values require more scrolling
+- **No wrap**: List navigation stops at top/bottom (no wrap-around)
+
 Example configurations:
 ```json
 "ui": {
-  "pageSize": 5    // Show 5 items, reduces wrap-around effect
+  "pageSize": 5,      // Show 5 items in selection menus
+  "listPageSize": 30  // Show 30 items in ticket list view
 }
-```
-```json
-"ui": {
-  "pageSize": 15   // Show 15 items at once
-}
-```
 
 ### API Configuration
 The `api` section in `.jirarc` controls API performance settings:

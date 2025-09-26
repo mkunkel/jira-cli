@@ -149,6 +149,18 @@ class JiraTicketCLI {
       needsUpdate = true;
     }
 
+    // Add missing ui.listPageSize
+    if (!this.config.ui) {
+      this.config.ui = {
+        pageSize: 10,
+        listPageSize: 25
+      };
+      needsUpdate = true;
+    } else if (!this.config.ui.listPageSize) {
+      this.config.ui.listPageSize = 25;
+      needsUpdate = true;
+    }
+
     // Add missing trackedTickets section
     if (!this.config.trackedTickets) {
       this.config.trackedTickets = {};
@@ -222,7 +234,8 @@ class JiraTicketCLI {
         command: process.env.EDITOR
       },
       ui: {
-        pageSize: 10
+        pageSize: 10,
+        listPageSize: 25
       },
       api: {
         assigneePageSize: 1000
@@ -767,6 +780,235 @@ class JiraTicketCLI {
     } catch (error) {
       console.error(chalk.red('Error:'), error.message);
       process.exit(1);
+    }
+  }
+
+  async listTickets() {
+    try {
+      console.log(chalk.blue('📋 Jira Ticket List\n'));
+
+      // Load configuration
+      await this.loadConfig();
+
+      // Validate configuration
+      this.validateConfiguration();
+
+      // Validate token before proceeding
+      await this.validateToken();
+
+      // Clean up old tracked tickets first
+      this.cleanupOldTrackedTickets();
+
+      const spinner = ora('Fetching all tickets...').start();
+
+      try {
+        // Get tracked tickets from local config
+        const trackedTickets = this.config.trackedTickets || {};
+
+        // Get ALL assigned tickets from Jira (including completed ones)
+        const assignedTickets = await this.jiraService.getAllAssignedTickets(this.config);
+
+        spinner.succeed('Tickets loaded');
+
+        // Combine and deduplicate tickets
+        const allTickets = this.combineAllTickets(trackedTickets, assignedTickets);
+
+        if (allTickets.length === 0) {
+          console.log(chalk.yellow('No tickets found.'));
+          console.log(chalk.white('Create tickets using the CLI or get assigned tickets in Jira to see them here.'));
+          return;
+        }
+
+        // Filter out old done tickets
+        const filteredTickets = this.filterOldDoneTickets(allTickets);
+
+        if (filteredTickets.length === 0) {
+          console.log(chalk.yellow('No active tickets found.'));
+          console.log(chalk.white('All tickets are either completed or have been done for too long.'));
+          return;
+        }
+
+        // Group tickets by status and display
+        await this.displayTicketsByStatus(filteredTickets);
+
+      } catch (error) {
+        spinner.fail('Failed to fetch tickets');
+        throw error;
+      }
+
+    } catch (error) {
+      console.error(chalk.red('Error:'), error.message);
+      process.exit(1);
+    }
+  }
+
+  combineAllTickets(trackedTickets, assignedTickets) {
+    const ticketMap = new Map();
+
+    // Add tracked tickets
+    for (const [key, ticket] of Object.entries(trackedTickets)) {
+      ticketMap.set(key, {
+        key: key,
+        summary: ticket.summary,
+        status: ticket.status,
+        workType: ticket.workType,
+        assignee: ticket.assignee,
+        updated: ticket.updatedAt,
+        source: 'tracked'
+      });
+    }
+
+    // Add assigned tickets (will overwrite if same key exists with more recent data)
+    for (const ticket of assignedTickets) {
+      ticketMap.set(ticket.key, ticket);
+    }
+
+    // Convert to array - no sorting needed for list view, we'll group by status
+    return Array.from(ticketMap.values());
+  }
+
+  filterOldDoneTickets(tickets) {
+    const doneStatusTrackingDays = this.config?.ticketTracking?.doneStatusTrackingDays || 14;
+    const now = new Date();
+    const doneStatuses = ['Done', 'Closed', 'Resolved', 'Complete', 'Completed'];
+
+    return tickets.filter(ticket => {
+      // Check if this is a done status
+      const isDoneStatus = doneStatuses.some(doneStatus =>
+        ticket.status.toLowerCase().includes(doneStatus.toLowerCase())
+      );
+
+      // If it's not a done status, keep it
+      if (!isDoneStatus) {
+        return true;
+      }
+
+      // If it is a done status, check how old it is
+      const updatedDate = new Date(ticket.updated);
+      const daysSinceUpdate = Math.floor((now - updatedDate) / (1000 * 60 * 60 * 24));
+
+      // Keep it only if it's newer than the threshold
+      return daysSinceUpdate <= doneStatusTrackingDays;
+    });
+  }
+
+  async displayTicketsByStatus(tickets) {
+    // Group tickets by status
+    const ticketsByStatus = new Map();
+
+    for (const ticket of tickets) {
+      if (!ticketsByStatus.has(ticket.status)) {
+        ticketsByStatus.set(ticket.status, []);
+      }
+      ticketsByStatus.get(ticket.status).push(ticket);
+    }
+
+    // Get allowed statuses for ordering
+    const allowedStatuses = this.config?.ticketTracking?.allowedStatuses || [];
+
+    // Create ordered list of statuses
+    const orderedStatuses = [];
+
+    // First, add allowed statuses in configured order
+    for (const status of allowedStatuses) {
+      if (ticketsByStatus.has(status)) {
+        orderedStatuses.push(status);
+      }
+    }
+
+    // Then add remaining statuses alphabetically
+    const remainingStatuses = Array.from(ticketsByStatus.keys())
+      .filter(status => !allowedStatuses.includes(status))
+      .sort();
+
+    orderedStatuses.push(...remainingStatuses);
+
+    // Build scrollable list items
+    const listItems = [];
+    let totalTickets = 0;
+
+    for (const status of orderedStatuses) {
+      const statusTickets = ticketsByStatus.get(status);
+      if (!statusTickets || statusTickets.length === 0) continue;
+
+      // Sort tickets within each status by ticket number
+      statusTickets.sort((a, b) => this.compareTicketNumbers(a.key, b.key));
+
+      // Determine status color
+      const isDoneStatus = ['Done', 'Closed', 'Resolved', 'Complete', 'Completed']
+        .some(doneStatus => status.toLowerCase().includes(doneStatus.toLowerCase()));
+      const statusColor = isDoneStatus ? chalk.green : chalk.yellow;
+
+      // Add status header
+      listItems.push(new inquirer.Separator(statusColor(`📌 ${status} (${statusTickets.length})`)));
+
+      // Add tickets in this status
+      for (const ticket of statusTickets) {
+        const truncatedSummary = ticket.summary.length > 80
+          ? ticket.summary.substring(0, 77) + '...'
+          : ticket.summary;
+
+        const sourceIndicator = ticket.source === 'tracked' ? '📌' : '👤';
+        const ticketLine = `${sourceIndicator} ${chalk.white(ticket.key)} - ${truncatedSummary}`;
+
+        listItems.push({
+          name: ticketLine,
+          value: ticket.key,
+          short: ticket.key
+        });
+      }
+
+      totalTickets += statusTickets.length;
+
+      // Add spacing between status groups
+      if (status !== orderedStatuses[orderedStatuses.length - 1]) {
+        listItems.push(new inquirer.Separator(' '));
+      }
+    }
+
+    // Add summary separator and exit option
+    listItems.push(new inquirer.Separator(chalk.cyan(`📊 Total: ${totalTickets} tickets across ${orderedStatuses.length} statuses`)));
+    listItems.push(new inquirer.Separator(chalk.gray('Legend: 📌 = CLI tracked, 👤 = Jira assigned')));
+    listItems.push(new inquirer.Separator(' '));
+    listItems.push({
+      name: chalk.blue('← Exit'),
+      value: 'exit',
+      short: 'Exit'
+    });
+
+    // Show scrollable list
+    const listPageSize = this.config?.ui?.listPageSize || 25;
+
+    const answer = await inquirer.prompt([{
+      type: 'list',
+      name: 'selection',
+      message: 'Browse tickets (Use arrow keys to scroll, Enter to select):',
+      choices: listItems,
+      pageSize: listPageSize,
+      loop: false
+    }]);
+
+    // Handle selection (currently just viewing, but could be extended)
+    if (answer.selection !== 'exit') {
+      console.log(chalk.blue(`\n🔗 View in Jira: ${this.config.jiraUrl}/browse/${answer.selection}`));
+
+      // Ask if user wants to manage this ticket
+      const action = await inquirer.prompt([{
+        type: 'confirm',
+        name: 'manage',
+        message: 'Would you like to manage this ticket?',
+        default: false
+      }]);
+
+      if (action.manage) {
+        // Get ticket details and show management menu
+        try {
+          const ticketDetails = await this.jiraService.getTicketDetails(answer.selection, this.config);
+          await this.showStatusTransitionMenu(ticketDetails);
+        } catch (error) {
+          console.error(chalk.red(`Error fetching ticket details: ${error.message}`));
+        }
+      }
     }
   }
 

@@ -44,4 +44,13 @@ program
     await cli.moveTicket(ticketKey);
   });
 
+// List tickets command
+program
+  .command('list')
+  .description('List all user tickets grouped by status')
+  .action(async () => {
+    const cli = new JiraTicketCLI();
+    await cli.listTickets();
+  });
+
 program.parse();

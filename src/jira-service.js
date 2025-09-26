@@ -715,6 +715,42 @@ class JiraService {
     }
   }
 
+  async getAllAssignedTickets(config) {
+    if (!this.client) {
+      this.initializeClient(config);
+    }
+
+    try {
+      const currentUser = await this.getCurrentUser(config);
+
+      // JQL to get ALL tickets assigned to current user (including completed ones)
+      const jql = `assignee = "${currentUser.emailAddress}" ORDER BY updated DESC`;
+
+      const response = await this.client.post('/rest/api/3/search/jql', {
+        jql: jql,
+        fields: ['key', 'summary', 'status', 'assignee', 'issuetype', 'updated'],
+        maxResults: 100 // Get more for comprehensive list
+      });
+
+      return response.data.issues.map(issue => ({
+        key: issue.key,
+        summary: issue.fields.summary,
+        status: issue.fields.status.name,
+        statusId: issue.fields.status.id,
+        workType: issue.fields.issuetype.name,
+        assignee: issue.fields.assignee ? issue.fields.assignee.displayName : 'Unassigned',
+        updated: issue.fields.updated,
+        source: 'jira'
+      }));
+    } catch (error) {
+      if (error.response?.status === 400) {
+        throw new Error(`Invalid JQL query: ${error.response?.data?.errorMessages?.[0] || error.message}`);
+      } else {
+        throw new Error(`Failed to fetch all assigned tickets: ${error.response?.data?.errorMessages?.[0] || error.message}`);
+      }
+    }
+  }
+
   async getTicketDetails(ticketKey, config) {
     if (!this.client) {
       this.initializeClient(config);

@@ -28,7 +28,8 @@
     "command": null
   },
   "ui": {
-    "pageSize": 10
+    "pageSize": 10,
+    "listPageSize": 25
   },
   "api": {
     "assigneePageSize": 1000
