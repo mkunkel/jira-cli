@@ -47,5 +47,19 @@
     "recentDays": 30,
     "enabled": true
   },
-  "assigneeUsage": {}
+  "assigneeUsage": {},
+  "ticketTracking": {
+    "enabled": true,
+    "trackingDays": 90,
+    "doneStatusTrackingDays": 14,
+    "allowedStatuses": [
+      "To Do",
+      "In Progress",
+      "Review",
+      "Blocked",
+      "Done",
+      "Backlog Unprioritized"
+    ]
+  },
+  "trackedTickets": {}
 }

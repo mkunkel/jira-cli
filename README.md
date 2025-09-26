@@ -157,7 +157,24 @@ The CLI looks for configuration in this order:
     "recentDays": 30,
     "enabled": true
   },
-  "componentUsage": {}
+  "componentUsage": {},
+  "statusTracking": {
+    "recentDays": 30,
+    "enabled": true
+  },
+  "statusUsage": {},
+  "assigneeTracking": {
+    "recentDays": 30,
+    "enabled": true
+  },
+  "assigneeUsage": {},
+  "ticketTracking": {
+    "enabled": true,
+    "trackingDays": 90,
+    "doneStatusTrackingDays": 14,
+    "allowedStatuses": ["To Do", "In Progress", "In Review", "Ready for Testing", "Done"]
+  },
+  "trackedTickets": {}
 }
 ```
 
@@ -191,10 +208,24 @@ The `--list-fields` command will show you:
 
 ### Usage
 
-### Standard Usage
+### Create Tickets (Default Command)
 ```bash
-./bin/jira-ticket.js
+./bin/jira-ticket.js         # Create a new ticket
+jira create                  # If globally installed
 ```
+
+### Manage Existing Tickets
+```bash
+./bin/jira-ticket.js move [TICKET-KEY]    # Transition tickets or manage tracking
+jira move                                 # Show interactive ticket selection
+jira move PROJ-123                       # Direct transition for specific ticket
+```
+
+The `move` command provides:
+- **Smart Ticket Selection**: Shows both locally tracked tickets and tickets assigned to you
+- **Status Transitions**: Change ticket status using configurable allowed statuses
+- **Local Tracking Management**: Remove tickets from local tracking
+- **Sorting**: Tickets are sorted by status priority (configurable), then by ticket number
 
 ### Preview Mode with Optional Submit
 Preview the ticket details, API calls, and configuration changes, then optionally create the ticket:
@@ -357,6 +388,34 @@ The CLI tracks which components you use and when:
 - **Configurable**: Set `componentTracking.recentDays` to change the recent timeframe
 - **Persistent Storage**: Usage data is stored in your `.jirarc` file after successful ticket creation
 - **Privacy**: Usage tracking is local only - no data is sent to external services
+
+### Ticket Tracking and Management
+
+The CLI automatically tracks tickets you create and provides tools to manage them:
+
+#### Local Ticket Tracking
+- **Auto-tracking**: All tickets created through the CLI are automatically tracked locally
+- **Configurable duration**: Set `ticketTracking.trackingDays` (default: 90 days)
+- **Done status tracking**: Separate duration for completed tickets via `doneStatusTrackingDays` (default: 14 days)
+- **Auto-cleanup**: Old tickets are automatically removed based on configured timeframes
+
+#### Status Management
+- **Allowed Statuses**: Configure `allowedStatuses` to limit transition options and control ticket sorting
+- **Smart Sorting**: Tickets with allowed statuses appear first, sorted by status priority, then ticket number
+- **Fallback Sorting**: Tickets with non-allowed statuses appear below, sorted alphabetically
+- **Filtering**: Only allowed status transitions are shown in the move command
+
+#### Configuration
+```json
+{
+  "ticketTracking": {
+    "enabled": true,
+    "trackingDays": 90,
+    "doneStatusTrackingDays": 14,
+    "allowedStatuses": ["To Do", "In Progress", "In Review", "Ready for Testing", "Done"]
+  }
+}
+```
 
 Example component selection layout:
 ```

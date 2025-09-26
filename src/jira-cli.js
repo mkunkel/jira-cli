@@ -135,6 +135,26 @@ class JiraTicketCLI {
       needsUpdate = true;
     }
 
+    // Add missing ticketTracking section
+    if (!this.config.ticketTracking) {
+      this.config.ticketTracking = {
+        enabled: true,
+        trackingDays: 90,
+        doneStatusTrackingDays: 14,
+        allowedStatuses: ["To Do", "In Progress", "In Review", "Ready for Testing", "Done"]
+      };
+      needsUpdate = true;
+    } else if (!this.config.ticketTracking.allowedStatuses) {
+      this.config.ticketTracking.allowedStatuses = ["To Do", "In Progress", "In Review", "Ready for Testing", "Done"];
+      needsUpdate = true;
+    }
+
+    // Add missing trackedTickets section
+    if (!this.config.trackedTickets) {
+      this.config.trackedTickets = {};
+      needsUpdate = true;
+    }
+
     // Save updated config if changes were made
     if (needsUpdate) {
       await fs.writeFile(configPath, JSON.stringify(this.config, null, 2));
@@ -221,7 +241,14 @@ class JiraTicketCLI {
         recentDays: 30,
         enabled: true
       },
-      assigneeUsage: {}
+      assigneeUsage: {},
+      ticketTracking: {
+        enabled: true,
+        trackingDays: 90,
+        doneStatusTrackingDays: 14,
+        allowedStatuses: ["To Do", "In Progress", "In Review", "Ready for Testing", "Done"]
+      },
+      trackedTickets: {}
     };
 
     const configPath = path.join(os.homedir(), '.jirarc');
@@ -559,6 +586,96 @@ class JiraTicketCLI {
     }
   }
 
+  addTrackedTicket(ticketKey, ticketData) {
+    if (!this.config?.ticketTracking?.enabled) {
+      return;
+    }
+
+    if (!this.config.trackedTickets) {
+      this.config.trackedTickets = {};
+    }
+
+    const now = new Date().toISOString();
+    this.config.trackedTickets[ticketKey] = {
+      summary: ticketData.summary,
+      status: ticketData.status ? ticketData.status.name : 'Unknown',
+      workType: ticketData.workType,
+      assignee: ticketData.assignee ? ticketData.assignee.displayName : 'Unassigned',
+      createdAt: now,
+      updatedAt: now,
+      createdBy: 'cli'
+    };
+  }
+
+  updateTrackedTicketStatus(ticketKey, newStatus) {
+    if (!this.config?.ticketTracking?.enabled || !this.config.trackedTickets?.[ticketKey]) {
+      return;
+    }
+
+    this.config.trackedTickets[ticketKey].status = newStatus;
+    this.config.trackedTickets[ticketKey].updatedAt = new Date().toISOString();
+  }
+
+  removeTrackedTicket(ticketKey) {
+    if (!this.config?.ticketTracking?.enabled || !this.config.trackedTickets) {
+      return;
+    }
+
+    delete this.config.trackedTickets[ticketKey];
+  }
+
+  cleanupOldTrackedTickets() {
+    if (!this.config?.ticketTracking?.enabled || !this.config.trackedTickets) {
+      return;
+    }
+
+    const trackingDays = this.config.ticketTracking.trackingDays || 90;
+    const doneStatusTrackingDays = this.config.ticketTracking.doneStatusTrackingDays || 14;
+    const now = new Date();
+
+    const doneStatuses = ['Done', 'Closed', 'Resolved', 'Complete', 'Completed'];
+
+    for (const [ticketKey, ticket] of Object.entries(this.config.trackedTickets)) {
+      const updatedDate = new Date(ticket.updatedAt);
+      const isDoneStatus = doneStatuses.some(status =>
+        ticket.status.toLowerCase().includes(status.toLowerCase())
+      );
+
+      let daysSinceUpdate = Math.floor((now - updatedDate) / (1000 * 60 * 60 * 24));
+
+      // Use different thresholds for done vs active tickets
+      const threshold = isDoneStatus ? doneStatusTrackingDays : trackingDays;
+
+      if (daysSinceUpdate > threshold) {
+        delete this.config.trackedTickets[ticketKey];
+      }
+    }
+  }
+
+  async saveTrackedTickets() {
+    if (!this.config?.ticketTracking?.enabled) {
+      return;
+    }
+
+    // Find the config file path (same logic as loadConfig)
+    const configPaths = [
+      path.join(process.cwd(), '.jirarc'),
+      path.join(os.homedir(), '.jirarc'),
+      path.join(__dirname, '..', '.jirarc')
+    ];
+
+    for (const configPath of configPaths) {
+      if (await fs.pathExists(configPath)) {
+        try {
+          await fs.writeFile(configPath, JSON.stringify(this.config, null, 2));
+          return;
+        } catch (error) {
+          console.warn(chalk.yellow(`Warning: Could not save tracked tickets to ${configPath}`));
+        }
+      }
+    }
+  }
+
   async validateToken() {
     const spinner = ora('Validating API access...').start();
 
@@ -604,6 +721,298 @@ class JiraTicketCLI {
           '  → Run `jira --test-connection` to test your configuration'
         );
       }
+    }
+  }
+
+  async moveTicket(ticketKey) {
+    try {
+      console.log(chalk.blue('🎫 Jira Ticket Mover\n'));
+
+      // Load configuration
+      await this.loadConfig();
+
+      // Validate configuration
+      this.validateConfiguration();
+
+      // Validate token before proceeding
+      await this.validateToken();
+
+      // Clean up old tracked tickets first
+      this.cleanupOldTrackedTickets();
+
+      let selectedTicket = null;
+
+      if (ticketKey) {
+        // Ticket key provided, fetch its details
+        console.log(chalk.cyan(`📋 Fetching ticket details for ${ticketKey}...`));
+        try {
+          selectedTicket = await this.jiraService.getTicketDetails(ticketKey, this.config);
+        } catch (error) {
+          console.error(chalk.red(`Error: ${error.message}`));
+          process.exit(1);
+        }
+      } else {
+        // No ticket key provided, show selection menu
+        selectedTicket = await this.selectTicketFromList();
+      }
+
+      if (!selectedTicket) {
+        console.log(chalk.yellow('No ticket selected. Exiting.'));
+        return;
+      }
+
+      // Show status transition menu
+      await this.showStatusTransitionMenu(selectedTicket);
+
+    } catch (error) {
+      console.error(chalk.red('Error:'), error.message);
+      process.exit(1);
+    }
+  }
+
+  async selectTicketFromList() {
+    const spinner = ora('Fetching tickets...').start();
+
+    try {
+      // Get tracked tickets from local config
+      const trackedTickets = this.config.trackedTickets || {};
+
+      // Get assigned tickets from Jira
+      const assignedTickets = await this.jiraService.getAssignedTickets(this.config);
+
+      spinner.succeed('Tickets loaded');
+
+      // Combine and deduplicate tickets
+      const allTickets = this.combineTickets(trackedTickets, assignedTickets);
+
+      if (allTickets.length === 0) {
+        console.log(chalk.yellow('\nNo tickets found. You can:'));
+        console.log(chalk.white('• Create tickets using the CLI to start tracking them'));
+        console.log(chalk.white('• Get tickets assigned to you in Jira to manage them'));
+        return null;
+      }
+
+      // Show ticket selection menu
+      return await this.showTicketSelectionMenu(allTickets);
+
+    } catch (error) {
+      spinner.fail('Failed to fetch tickets');
+      throw error;
+    }
+  }
+
+  combineTickets(trackedTickets, assignedTickets) {
+    const ticketMap = new Map();
+
+    // Add tracked tickets
+    for (const [key, ticket] of Object.entries(trackedTickets)) {
+      ticketMap.set(key, {
+        key: key,
+        summary: ticket.summary,
+        status: ticket.status,
+        workType: ticket.workType,
+        assignee: ticket.assignee,
+        updated: ticket.updatedAt,
+        source: 'tracked'
+      });
+    }
+
+    // Add assigned tickets (will overwrite if same key exists)
+    for (const ticket of assignedTickets) {
+      ticketMap.set(ticket.key, ticket);
+    }
+
+    // Convert to array and apply complex sorting
+    const tickets = Array.from(ticketMap.values());
+    const allowedStatuses = this.config?.ticketTracking?.allowedStatuses || [];
+
+    return tickets.sort((a, b) => {
+      const aIsAllowed = allowedStatuses.includes(a.status);
+      const bIsAllowed = allowedStatuses.includes(b.status);
+
+      // First, separate allowed vs non-allowed statuses
+      if (aIsAllowed && !bIsAllowed) return -1;
+      if (!aIsAllowed && bIsAllowed) return 1;
+
+      if (aIsAllowed && bIsAllowed) {
+        // Both have allowed statuses - sort by status order in config, then by ticket number
+        const aStatusIndex = allowedStatuses.indexOf(a.status);
+        const bStatusIndex = allowedStatuses.indexOf(b.status);
+
+        if (aStatusIndex !== bStatusIndex) {
+          return aStatusIndex - bStatusIndex;
+        }
+
+        // Same status, sort by ticket number
+        return this.compareTicketNumbers(a.key, b.key);
+      }
+
+      if (!aIsAllowed && !bIsAllowed) {
+        // Both have non-allowed statuses - sort alphabetically by status, then by ticket number
+        if (a.status !== b.status) {
+          return a.status.localeCompare(b.status);
+        }
+
+        // Same status, sort by ticket number
+        return this.compareTicketNumbers(a.key, b.key);
+      }
+
+      return 0;
+    });
+  }
+
+  compareTicketNumbers(keyA, keyB) {
+    // Extract numeric part from ticket keys (e.g., "PROJ-123" -> 123)
+    const numA = parseInt(keyA.split('-').pop()) || 0;
+    const numB = parseInt(keyB.split('-').pop()) || 0;
+    return numA - numB;
+  }
+
+  async showTicketSelectionMenu(tickets) {
+    console.log(chalk.cyan('\n📋 Select a ticket to manage:\n'));
+
+    const choices = tickets.map(ticket => {
+      const truncatedSummary = ticket.summary.length > 60
+        ? ticket.summary.substring(0, 57) + '...'
+        : ticket.summary;
+
+      const sourceIndicator = ticket.source === 'tracked' ? '📌' : '👤';
+      const statusColor = ticket.status === 'Done' || ticket.status === 'Closed' ? chalk.green : chalk.yellow;
+
+      return {
+        name: `${sourceIndicator} ${ticket.key} - ${truncatedSummary} [${statusColor(ticket.status)}]`,
+        value: ticket,
+        short: ticket.key
+      };
+    });
+
+    const answer = await inquirer.prompt([{
+      type: 'list',
+      name: 'ticket',
+      message: 'Select ticket (Use arrow keys, Enter to select):',
+      choices: choices,
+      pageSize: this.config?.ui?.pageSize || 10,
+      loop: false
+    }]);
+
+    return answer.ticket;
+  }
+
+  async showStatusTransitionMenu(ticket) {
+    console.log(chalk.cyan(`\n🔄 Managing ticket: ${ticket.key}`));
+    console.log(chalk.white(`Summary: ${ticket.summary}`));
+    console.log(chalk.white(`Current Status: ${ticket.status}\n`));
+
+    const spinner = ora('Fetching available transitions...').start();
+
+    try {
+      // Get available transitions for this ticket
+      const allTransitions = await this.jiraService.getAvailableTransitions(ticket.key, this.config);
+
+      // Filter transitions based on allowed statuses and exclude current status
+      const allowedStatuses = this.config?.ticketTracking?.allowedStatuses || [];
+      let transitions = allowedStatuses.length > 0
+        ? allTransitions.filter(transition =>
+            allowedStatuses.includes(transition.name) &&
+            transition.name !== ticket.status
+          )
+        : allTransitions.filter(transition => transition.name !== ticket.status);
+
+      // Sort transitions to match the order in allowedStatuses
+      if (allowedStatuses.length > 0) {
+        transitions.sort((a, b) => {
+          const aIndex = allowedStatuses.indexOf(a.name);
+          const bIndex = allowedStatuses.indexOf(b.name);
+          return aIndex - bIndex;
+        });
+      }
+
+      spinner.succeed('Transitions loaded');
+
+      if (transitions.length === 0) {
+        console.log(chalk.yellow('No allowed status transitions available for this ticket.'));
+        console.log(chalk.white('Check your allowedStatuses configuration in .jirarc or you may lack permissions.'));
+        return;
+      }
+
+      // Build choices for status menu
+      const choices = [
+        ...transitions.map(transition => ({
+          name: `Change status to: ${transition.name}`,
+          value: { action: 'transition', transition: transition },
+          short: transition.name
+        })),
+        new inquirer.Separator('─────────────────────'),
+        {
+          name: '🗑️  Delete',
+          value: { action: 'delete' },
+          short: 'Delete'
+        }
+      ];
+
+      const answer = await inquirer.prompt([{
+        type: 'list',
+        name: 'action',
+        message: 'Select action (Use arrow keys, Enter to select):',
+        choices: choices,
+        pageSize: this.config?.ui?.pageSize || 10,
+        loop: false
+      }]);
+
+      const selectedAction = answer.action;
+
+      if (selectedAction.action === 'delete') {
+        await this.confirmAndDeleteTicket(ticket);
+      } else if (selectedAction.action === 'transition') {
+        await this.executeStatusTransition(ticket, selectedAction.transition);
+      }
+
+    } catch (error) {
+      spinner.fail('Failed to fetch transitions');
+      throw error;
+    }
+  }
+
+  async confirmAndDeleteTicket(ticket) {
+    console.log(chalk.yellow(`\n⚠️  This will remove ${ticket.key} from local tracking only.`));
+    console.log(chalk.white('The ticket will remain in Jira unchanged.\n'));
+
+    const confirmation = await inquirer.prompt([{
+      type: 'confirm',
+      name: 'confirmed',
+      message: 'Are you sure you want to remove this ticket from tracking?',
+      default: false
+    }]);
+
+    if (confirmation.confirmed) {
+      this.removeTrackedTicket(ticket.key);
+      await this.saveTrackedTickets();
+      console.log(chalk.green(`✅ ${ticket.key} removed from local tracking`));
+    } else {
+      console.log(chalk.yellow('❌ Deletion cancelled'));
+    }
+  }
+
+  async executeStatusTransition(ticket, transition) {
+    const spinner = ora(`Transitioning ${ticket.key} - ${ticket.summary} to "${transition.name}"...`).start();
+
+    try {
+      await this.jiraService.transitionTicket(ticket.key, transition.name, this.config);
+      spinner.succeed(`Status changed to "${transition.name}"`);
+
+      // Update local tracking if this ticket is tracked
+      if (this.config.trackedTickets?.[ticket.key]) {
+        this.updateTrackedTicketStatus(ticket.key, transition.name);
+        await this.saveTrackedTickets();
+        console.log(chalk.blue('📌 Local tracking updated'));
+      }
+
+      console.log(chalk.green(`\n✅ ${ticket.key} - ${ticket.summary} successfully transitioned to "${transition.name}"`));
+      console.log(chalk.blue(`🔗 View in Jira: ${this.config.jiraUrl}/browse/${ticket.key}`));
+
+    } catch (error) {
+      spinner.fail(`Failed to transition ticket: ${error.message}`);
+      console.log(chalk.red('❌ Status transition failed'));
     }
   }
 
@@ -1909,6 +2318,10 @@ class JiraTicketCLI {
       await this.saveComponentUsage();
       await this.saveStatusUsage();
       await this.saveAssigneeUsage();
+
+      // Track the newly created ticket
+      this.addTrackedTicket(result.key, ticketData);
+      await this.saveTrackedTickets();
 
       console.log(chalk.green('\n✅ Ticket Created:'));
       console.log(chalk.white(`Key: ${result.key}`));

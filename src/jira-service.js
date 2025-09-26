@@ -678,6 +678,99 @@ class JiraService {
       }
     }
   }
+
+  async getAssignedTickets(config) {
+    if (!this.client) {
+      this.initializeClient(config);
+    }
+
+    try {
+      const currentUser = await this.getCurrentUser(config);
+
+      // JQL to get tickets assigned to current user that are not in done statuses
+      const jql = `assignee = "${currentUser.emailAddress}" AND status NOT IN (Done, Closed, Resolved, Complete, Completed) ORDER BY updated DESC`;
+
+      const response = await this.client.post('/rest/api/3/search/jql', {
+        jql: jql,
+        fields: ['key', 'summary', 'status', 'assignee', 'issuetype', 'updated'],
+        maxResults: 50 // Limit to recent tickets
+      });
+
+      return response.data.issues.map(issue => ({
+        key: issue.key,
+        summary: issue.fields.summary,
+        status: issue.fields.status.name,
+        statusId: issue.fields.status.id,
+        workType: issue.fields.issuetype.name,
+        assignee: issue.fields.assignee ? issue.fields.assignee.displayName : 'Unassigned',
+        updated: issue.fields.updated,
+        source: 'jira'
+      }));
+    } catch (error) {
+      if (error.response?.status === 400) {
+        throw new Error(`Invalid JQL query: ${error.response?.data?.errorMessages?.[0] || error.message}`);
+      } else {
+        throw new Error(`Failed to fetch assigned tickets: ${error.response?.data?.errorMessages?.[0] || error.message}`);
+      }
+    }
+  }
+
+  async getTicketDetails(ticketKey, config) {
+    if (!this.client) {
+      this.initializeClient(config);
+    }
+
+    try {
+      const response = await this.client.get(`/rest/api/3/issue/${ticketKey}`, {
+        params: {
+          fields: 'key,summary,status,assignee,issuetype,updated'
+        }
+      });
+
+      const issue = response.data;
+      return {
+        key: issue.key,
+        summary: issue.fields.summary,
+        status: issue.fields.status.name,
+        statusId: issue.fields.status.id,
+        workType: issue.fields.issuetype.name,
+        assignee: issue.fields.assignee ? issue.fields.assignee.displayName : 'Unassigned',
+        updated: issue.fields.updated,
+        source: 'jira'
+      };
+    } catch (error) {
+      if (error.response?.status === 404) {
+        throw new Error(`Ticket ${ticketKey} not found`);
+      } else {
+        throw new Error(`Failed to fetch ticket details: ${error.response?.data?.errorMessages?.[0] || error.message}`);
+      }
+    }
+  }
+
+  async getAvailableTransitions(issueKey, config) {
+    if (!this.client) {
+      this.initializeClient(config);
+    }
+
+    try {
+      const response = await this.client.get(`/rest/api/3/issue/${issueKey}/transitions`);
+
+      return response.data.transitions.map(transition => ({
+        id: transition.id,
+        name: transition.to.name,
+        description: transition.to.description || '',
+        statusCategory: transition.to.statusCategory?.name || ''
+      }));
+    } catch (error) {
+      if (error.response?.status === 404) {
+        throw new Error(`Ticket ${issueKey} not found`);
+      } else if (error.response?.status === 403) {
+        throw new Error(`Access denied to ticket ${issueKey}. You may not have permission to view transitions.`);
+      } else {
+        throw new Error(`Failed to fetch transitions: ${error.response?.data?.errorMessages?.[0] || error.message}`);
+      }
+    }
+  }
 }
 
 module.exports = JiraService;

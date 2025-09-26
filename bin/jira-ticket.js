@@ -7,8 +7,13 @@ const program = new Command();
 
 program
   .name('jira-ticket')
-  .description('CLI for creating Jira tickets')
-  .version('1.0.0')
+  .description('CLI for creating and managing Jira tickets')
+  .version('1.0.0');
+
+// Create ticket command (default)
+program
+  .command('create', { isDefault: true })
+  .description('Create a new Jira ticket')
   .option('--dry-run', 'Preview ticket details and optionally create the ticket')
   .option('--dryrun', 'Preview ticket details and optionally create the ticket (alias for --dry-run)')
   .option('--test-connection', 'Test the connection to Jira with current configuration')
@@ -28,6 +33,15 @@ program
       const isDryRun = options.dryRun || options.dryrun;
       await cli.run(isDryRun);
     }
+  });
+
+// Move ticket command
+program
+  .command('move [ticketKey]')
+  .description('Transition a ticket to a different status or manage tracked tickets')
+  .action(async (ticketKey) => {
+    const cli = new JiraTicketCLI();
+    await cli.moveTicket(ticketKey);
   });
 
 program.parse();
