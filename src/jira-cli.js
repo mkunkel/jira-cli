@@ -1551,6 +1551,397 @@ class JiraTicketCLI {
     return { emailAddress: answer.email };
   }
 
+  async showTicket(ticketKey) {
+    try {
+      console.log(chalk.blue('📋 Jira Ticket Details\n'));
+
+      // Load configuration
+      await this.loadConfig();
+
+      // Validate configuration
+      this.validateConfiguration();
+
+      // Validate token before proceeding
+      await this.validateToken();
+
+      const spinner = ora(`Fetching ticket details for ${ticketKey}...`).start();
+
+      try {
+        // Get comprehensive ticket details
+        const ticketData = await this.jiraService.getComprehensiveTicketDetails(ticketKey, this.config);
+
+        spinner.succeed('Ticket details loaded');
+
+        // Display formatted ticket information
+        this.displayTicketDetails(ticketData);
+
+      } catch (error) {
+        spinner.fail('Failed to fetch ticket details');
+        throw error;
+      }
+
+    } catch (error) {
+      console.error(chalk.red('Error:'), error.message);
+      process.exit(1);
+    }
+  }
+
+  displayTicketDetails(ticketData) {
+    const fields = ticketData.fields;
+    const names = ticketData.names || {};
+
+    // Header with key and summary
+    console.log(chalk.cyan.bold(`🎫 ${ticketData.key}`));
+    if (fields.summary) {
+      console.log(chalk.white.bold(fields.summary));
+    }
+    console.log(chalk.blue(`🔗 ${this.config.jiraUrl}/browse/${ticketData.key}\n`));
+
+    // Core fields in preferred order
+    const coreFields = [
+      { key: 'status', label: 'Status', icon: '📊' },
+      { key: 'issuetype', label: 'Work Type', icon: '🏷️' },
+      { key: 'priority', label: 'Priority', icon: '⚡' },
+      { key: 'assignee', label: 'Assignee', icon: '👤' },
+      { key: 'reporter', label: 'Reporter', icon: '📝' },
+      { key: 'created', label: 'Created', icon: '📅' },
+      { key: 'updated', label: 'Updated', icon: '🔄' },
+      { key: 'components', label: 'Components', icon: '🧩' }
+    ];
+
+    // Display core fields
+    for (const fieldDef of coreFields) {
+      const value = this.formatFieldValueForShow(fields[fieldDef.key], fieldDef.key);
+      if (value) {
+        console.log(`${fieldDef.icon} ${chalk.cyan(fieldDef.label + ':')} ${value}`);
+      }
+    }
+
+    // Display description if present
+    if (fields.description) {
+      console.log(`\n📄 ${chalk.cyan('Description:')}`);
+      const descriptionText = this.extractTextFromADF(fields.description);
+      if (descriptionText) {
+        console.log(chalk.white(this.wrapText(descriptionText, 80)));
+      }
+    }
+
+    // Display custom fields
+    const customFields = this.getPopulatedCustomFields(fields, names, coreFields);
+    if (customFields.length > 0) {
+      console.log(`\n🔧 ${chalk.cyan('Custom Fields:')}`);
+      for (const field of customFields) {
+        console.log(`   ${chalk.gray(field.name + ':')} ${field.value}`);
+      }
+    }
+
+    console.log(''); // Empty line at end
+  }
+
+  formatFieldValueForShow(value, fieldKey) {
+    if (!value) {
+      return null;
+    }
+
+    switch (fieldKey) {
+      case 'status':
+        return value.name ? chalk.yellow(value.name) : chalk.yellow(value);
+
+      case 'issuetype':
+        return value.name || value;
+
+      case 'priority':
+        const priorityName = value.name || value;
+        const priorityColors = {
+          'Blocker': chalk.red.bold,
+          'Highest': chalk.red,
+          'High': chalk.yellow,
+          'Medium': chalk.blue,
+          'Low': chalk.gray,
+          'Lowest': chalk.gray
+        };
+        return priorityColors[priorityName] ? priorityColors[priorityName](priorityName) : priorityName;
+
+      case 'assignee':
+      case 'reporter':
+        return value.displayName || value.name || value.emailAddress || value;
+
+      case 'created':
+      case 'updated':
+        return this.formatDate(value);
+
+      case 'components':
+        if (Array.isArray(value) && value.length > 0) {
+          return value.map(c => c.name || c).join(', ');
+        }
+        return null;
+
+      default:
+        // Check if this looks like a date field
+        if (typeof value === 'string' && this.isDateField(fieldKey, value)) {
+          return this.formatDate(value);
+        }
+
+        return this.formatComplexValue(value);
+    }
+  }
+
+  isDateField(fieldKey, value) {
+    // Check if field name suggests it's a date
+    const dateFieldNames = ['date', 'created', 'updated', 'changed', 'time', 'last', 'viewed'];
+    const fieldName = fieldKey.toLowerCase();
+
+    if (dateFieldNames.some(dateWord => fieldName.includes(dateWord))) {
+      // Check if value looks like a date
+      return this.looksLikeDate(value);
+    }
+
+    return false;
+  }
+
+  looksLikeDate(value) {
+    if (typeof value !== 'string') return false;
+
+    // Check for common date patterns
+    const datePatterns = [
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/, // ISO format
+      /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/, // SQL format
+      /^\d{1,2}\/\d{1,2}\/\d{4}/,              // US format
+      /^\d{4}\/\d{2}\/\d{2}/                   // Alternative format
+    ];
+
+    return datePatterns.some(pattern => pattern.test(value));
+  }
+
+  formatComplexValue(value) {
+    // Handle arrays
+    if (Array.isArray(value)) {
+      if (value.length === 0) {
+        return null;
+      }
+
+      const formattedItems = value.map(item => {
+        if (typeof item === 'object' && item !== null) {
+          return item.value || item.name || item.displayName || item.key || null;
+        }
+        return item;
+      }).filter(item => item !== null);
+
+      return formattedItems.length > 0 ? formattedItems.join(', ') : null;
+    }
+
+    // Handle objects
+    if (typeof value === 'object' && value !== null) {
+      // Check for common object properties that have meaningful display values
+      if (value.value !== undefined && value.value !== null) {
+        return String(value.value);
+      }
+
+      if (value.name !== undefined && value.name !== null) {
+        return String(value.name);
+      }
+
+      if (value.displayName !== undefined && value.displayName !== null) {
+        return String(value.displayName);
+      }
+
+      if (value.key !== undefined && value.key !== null) {
+        return String(value.key);
+      }
+
+      // Check for count/size properties
+      if (value.size !== undefined) {
+        return `${value.size} items`;
+      }
+
+      if (value.total !== undefined) {
+        return String(value.total);
+      }
+
+      // For objects with only system properties or no meaningful data, return null
+      const meaningfulKeys = Object.keys(value).filter(key =>
+        !key.startsWith('_') &&
+        !['self', 'id', 'iconUrl', 'avatarUrl'].includes(key)
+      );
+
+      if (meaningfulKeys.length === 0) {
+        return null;
+      }
+
+      // If it's a simple object with just a few string properties, try to format it
+      if (meaningfulKeys.length <= 2) {
+        const simpleValues = meaningfulKeys.map(key => {
+          const val = value[key];
+          if (typeof val === 'string' || typeof val === 'number') {
+            return val;
+          }
+          return null;
+        }).filter(val => val !== null);
+
+        if (simpleValues.length > 0) {
+          return simpleValues.join(' ');
+        }
+      }
+
+      // For complex objects we can't meaningfully display, return null
+      return null;
+    }
+
+    // Handle primitive values
+    if (typeof value === 'string') {
+      return value.trim();
+    }
+
+    if (typeof value === 'number') {
+      // Clean up decimal numbers that are actually integers
+      if (Number.isInteger(value) || value % 1 === 0) {
+        return String(Math.round(value));
+      }
+      return String(value);
+    }
+
+    if (typeof value === 'boolean') {
+      return value ? 'Yes' : 'No';
+    }
+
+    return null;
+  }
+
+  getPopulatedCustomFields(fields, names, coreFields) {
+    const customFields = [];
+    const coreFieldKeys = coreFields.map(f => f.key);
+    const systemFields = ['summary', 'description', 'project', 'labels', 'fixVersions', 'versions'];
+
+    // Fields that commonly contain complex objects with no meaningful display value
+    const skipFields = [
+      'comment', 'comments',
+      'worklog', 'worklogs',
+      'development',
+      'progress',
+      'votes',
+      'watchers',
+      'timetracking',
+      'timeoriginalestimate',
+      'timeestimate',
+      'timespent',
+      'aggregatetimeoriginalestimate',
+      'aggregatetimeestimate',
+      'aggregatetimespent',
+      'log work',
+      'restrict to'
+    ];
+
+    for (const [fieldKey, fieldValue] of Object.entries(fields)) {
+      // Skip core fields, system fields, and empty values
+      if (coreFieldKeys.includes(fieldKey) || systemFields.includes(fieldKey) || !fieldValue) {
+        continue;
+      }
+
+      // Skip commonly problematic fields
+      const fieldName = (names[fieldKey] || fieldKey).toLowerCase();
+      if (skipFields.some(skip => fieldName.includes(skip) || fieldKey.toLowerCase().includes(skip))) {
+        continue;
+      }
+
+      // Skip fields that start with 'customfield_' if they're empty objects or arrays
+      if (fieldKey.startsWith('customfield_') && typeof fieldValue === 'object') {
+        if (!fieldValue || (Array.isArray(fieldValue) && fieldValue.length === 0)) {
+          continue;
+        }
+
+        // Skip if it's an object with only system properties
+        if (!Array.isArray(fieldValue)) {
+          const meaningfulKeys = Object.keys(fieldValue).filter(key =>
+            !key.startsWith('_') &&
+            !['self', 'id', 'iconUrl', 'avatarUrl'].includes(key)
+          );
+          if (meaningfulKeys.length === 0) {
+            continue;
+          }
+        }
+      }
+
+      const displayName = names[fieldKey] || fieldKey;
+      const formattedValue = this.formatFieldValueForShow(fieldValue, fieldKey);
+
+      // Only include if we got a meaningful formatted value
+      if (formattedValue && formattedValue !== 'null' && formattedValue !== '{}') {
+        // Skip fields with very long text containing Jira markup
+        if (typeof formattedValue === 'string' && formattedValue.length > 200 &&
+            (formattedValue.includes('{panel') || formattedValue.includes('{code') ||
+             formattedValue.includes('{quote') || formattedValue.includes('{color'))) {
+          continue;
+        }
+
+        customFields.push({
+          name: displayName,
+          value: formattedValue
+        });
+      }
+    }
+
+    // Sort custom fields alphabetically
+    return customFields.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  formatDate(dateString) {
+    if (!dateString) return null;
+
+    try {
+      const date = new Date(dateString);
+      const now = new Date();
+      const diffMs = now - date;
+      const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+      const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+      const diffMinutes = Math.floor(diffMs / (1000 * 60));
+
+      const formatted = date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+      if (diffMinutes < 60) {
+        return `${formatted} ${chalk.gray(`(${diffMinutes}m ago)`)}`;
+      } else if (diffHours < 24) {
+        return `${formatted} ${chalk.gray(`(${diffHours}h ago)`)}`;
+      } else if (diffDays < 30) {
+        return `${formatted} ${chalk.gray(`(${diffDays}d ago)`)}`;
+      } else {
+        return formatted;
+      }
+    } catch (error) {
+      return dateString;
+    }
+  }
+
+  wrapText(text, width) {
+    const lines = text.split('\n');
+    const wrappedLines = [];
+
+    for (const line of lines) {
+      if (line.length <= width) {
+        wrappedLines.push(line);
+      } else {
+        const words = line.split(' ');
+        let currentLine = '';
+
+        for (const word of words) {
+          if (currentLine.length + word.length + 1 <= width) {
+            currentLine = currentLine ? currentLine + ' ' + word : word;
+          } else {
+            if (currentLine) {
+              wrappedLines.push(currentLine);
+            }
+            currentLine = word;
+          }
+        }
+
+        if (currentLine) {
+          wrappedLines.push(currentLine);
+        }
+      }
+    }
+
+    return wrappedLines.join('\n');
+  }
+
   async selectTicketFromList() {
     const spinner = ora('Fetching tickets...').start();
 

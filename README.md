@@ -263,6 +263,23 @@ The `edit` command provides:
 - **No Wrapping Navigation**: Clean scrolling through field lists
 - **Visual Feedback**: Clear success/failure messages and Jira links
 
+### Show Ticket Details
+```bash
+./bin/jira-ticket.js show TICKET-KEY   # Display comprehensive ticket information
+jira show PROJ-123                     # If globally installed
+```
+
+The `show` command provides:
+- **Comprehensive Display**: Shows all populated ticket fields in organized sections
+- **Smart Formatting**: Color-coded priorities, relative timestamps, proper field formatting
+- **Clean Layout**: Core fields first (Status, Work Type, Priority, etc.), then custom fields
+- **Intelligent Filtering**: Automatically hides empty fields, complex objects, and system metadata
+- **Rich Text Support**: Converts ADF descriptions to readable text with proper wrapping
+- **Date Recognition**: Automatically formats date/time fields with relative timestamps
+- **Object Handling**: Extracts meaningful values from complex objects, skips problematic fields
+- **Direct Link**: Includes clickable Jira URL for quick browser access
+- **Custom Field Support**: Shows all meaningful custom fields with proper names and values
+
 ### Preview Mode with Optional Submit
 Preview the ticket details, API calls, and configuration changes, then optionally create the ticket:
 ```bash

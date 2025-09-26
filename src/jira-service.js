@@ -787,6 +787,28 @@ class JiraService {
     }
   }
 
+  async getComprehensiveTicketDetails(ticketKey, config) {
+    if (!this.client) {
+      this.initializeClient(config);
+    }
+
+    try {
+      const response = await this.client.get(`/rest/api/3/issue/${ticketKey}`, {
+        params: {
+          expand: 'names,schema'
+        }
+      });
+
+      return response.data;
+    } catch (error) {
+      if (error.response?.status === 404) {
+        throw new Error(`Ticket ${ticketKey} not found`);
+      } else {
+        throw new Error(`Failed to fetch comprehensive ticket details: ${error.response?.data?.errorMessages?.[0] || error.message}`);
+      }
+    }
+  }
+
   async getAvailableTransitions(issueKey, config) {
     if (!this.client) {
       this.initializeClient(config);

@@ -62,4 +62,13 @@ program
     await cli.editTicket(ticketKey);
   });
 
+// Show ticket command
+program
+  .command('show <ticketKey>')
+  .description('Display detailed information about a ticket')
+  .action(async (ticketKey) => {
+    const cli = new JiraTicketCLI();
+    await cli.showTicket(ticketKey);
+  });
+
 program.parse();
