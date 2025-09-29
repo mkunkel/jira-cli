@@ -220,6 +220,7 @@ jira create                  # If globally installed
 ./bin/jira-ticket.js move [TICKET-KEY]    # Transition tickets or manage tracking
 jira move                                 # Show interactive ticket selection
 jira move PROJ-123                       # Direct transition for specific ticket
+jira move 123                            # Direct transition (uses your project key)
 ```
 
 The `move` command provides:
@@ -250,6 +251,7 @@ The `list` command provides:
 ./bin/jira-ticket.js edit [TICKET-KEY]  # Edit fields of an existing ticket
 jira edit                               # Show ticket selection menu
 jira edit PROJ-123                     # Direct edit for specific ticket
+jira edit 123                          # Direct edit (uses your project key)
 ```
 
 The `edit` command provides:
@@ -267,7 +269,10 @@ The `edit` command provides:
 ```bash
 ./bin/jira-ticket.js show TICKET-KEY   # Display comprehensive ticket information
 jira show PROJ-123                     # If globally installed
+jira show 123                          # Using just number (uses your project key)
 ```
+
+> **💡 Tip**: For commands that take ticket keys (`move`, `edit`, `show`), you can use just the ticket number (e.g., `123`) instead of the full key (e.g., `PROJ-123`). The CLI will automatically prepend your configured project key.
 
 The `show` command provides:
 - **Comprehensive Display**: Shows all populated ticket fields in organized sections

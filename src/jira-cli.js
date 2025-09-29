@@ -744,6 +744,9 @@ class JiraTicketCLI {
       // Load configuration
       await this.loadConfig();
 
+      // Normalize ticket key if it's numeric
+      ticketKey = this.normalizeTicketKey(ticketKey);
+
       // Validate configuration
       this.validateConfiguration();
 
@@ -1018,6 +1021,9 @@ class JiraTicketCLI {
 
       // Load configuration
       await this.loadConfig();
+
+      // Normalize ticket key if it's numeric
+      ticketKey = this.normalizeTicketKey(ticketKey);
 
       // Validate configuration
       this.validateConfiguration();
@@ -1551,12 +1557,32 @@ class JiraTicketCLI {
     return { emailAddress: answer.email };
   }
 
+  normalizeTicketKey(ticketKey) {
+    if (!ticketKey) {
+      return ticketKey;
+    }
+
+    // Check if the ticket key is purely numeric
+    if (/^\d+$/.test(ticketKey)) {
+      // Prepend project key
+      const projectKey = this.config?.projectKey;
+      if (projectKey) {
+        return `${projectKey}-${ticketKey}`;
+      }
+    }
+
+    return ticketKey;
+  }
+
   async showTicket(ticketKey) {
     try {
       console.log(chalk.blue('📋 Jira Ticket Details\n'));
 
       // Load configuration
       await this.loadConfig();
+
+      // Normalize ticket key if it's numeric
+      ticketKey = this.normalizeTicketKey(ticketKey);
 
       // Validate configuration
       this.validateConfiguration();
