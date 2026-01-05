@@ -1244,12 +1244,42 @@ class JiraTicketCLI {
         return ticket.description ? this.extractTextFromADF(ticket.description) : '';
       case 'components':
         return ticket.components ? ticket.components.map(c => c.name || c) : [];
+      case 'issuelinks':
+        if (ticket.fullFields && ticket.fullFields[fieldKey]) {
+          const links = ticket.fullFields[fieldKey];
+          if (Array.isArray(links) && links.length > 0) {
+            return links.map(link => {
+              // Handle both inward and outward links
+              if (link.outwardIssue) {
+                return link.outwardIssue.key;
+              } else if (link.inwardIssue) {
+                return link.inwardIssue.key;
+              }
+              return null;
+            }).filter(Boolean);
+          }
+        }
+        return [];
+      case 'parent':
+        // Handle parent field (for parent-child relationships and epics)
+        if (ticket.fullFields && ticket.fullFields[fieldKey]) {
+          const parent = ticket.fullFields[fieldKey];
+          if (parent && parent.key) {
+            return parent.key;
+          }
+        }
+        return 'Unknown';
       case 'priority':
         return ticket.priority;
       default:
-        // For custom fields and other fields, use the full field data
+        // Handle epic link and other custom fields that might link to issues
         if (ticket.fullFields && ticket.fullFields[fieldKey]) {
           const fieldValue = ticket.fullFields[fieldKey];
+
+          // Handle issue object (for epic link, parent link, etc.)
+          if (fieldValue && typeof fieldValue === 'object' && fieldValue.key) {
+            return fieldValue.key;
+          }
 
           // Handle different field value formats
           if (fieldValue && typeof fieldValue === 'object') {
@@ -1339,21 +1369,31 @@ class JiraTicketCLI {
     const fieldType = field.schema?.type;
 
     try {
-      switch (fieldType) {
-        case 'string':
-          newValue = await this.editStringField(field);
-          break;
-        case 'array':
-          newValue = await this.editArrayField(field);
-          break;
-        case 'option':
-          newValue = await this.editOptionField(field);
-          break;
-        case 'user':
-          newValue = await this.editUserField(field);
-          break;
-        default:
-          newValue = await this.editStringField(field); // Default to string input
+      // Check for special fields first (parent, epic link, etc.)
+      if (field.key === 'parent' ||
+          field.key.includes('epic') ||
+          field.displayName?.toLowerCase().includes('parent') ||
+          field.displayName?.toLowerCase().includes('epic')) {
+        // Handle parent/epic link fields with issue selection
+        newValue = await this.editIssueField(field, ticketKey);
+      } else {
+        // Handle by field type
+        switch (fieldType) {
+          case 'string':
+            newValue = await this.editStringField(field);
+            break;
+          case 'array':
+            newValue = await this.editArrayField(field, ticketKey);
+            break;
+          case 'option':
+            newValue = await this.editOptionField(field);
+            break;
+          case 'user':
+            newValue = await this.editUserField(field);
+            break;
+          default:
+            newValue = await this.editStringField(field); // Default to string input
+        }
       }
 
       if (newValue === null) {
@@ -1361,7 +1401,28 @@ class JiraTicketCLI {
         return { updated: false };
       }
 
-      // Update the ticket
+      // Check if this is issue link data that needs special handling
+      if (newValue && newValue._issueLinkData) {
+        const spinner = ora(`Creating issue links...`).start();
+
+        try {
+          // Prepare link data for the dedicated endpoint
+          const linkData = newValue.issues.map(issueKey => ({
+            type: newValue.linkType,
+            issueKey: issueKey
+          }));
+
+          await this.jiraService.createIssueLinks(ticketKey, linkData, this.config);
+
+          spinner.succeed(`Issue links created (${linkData.length} link${linkData.length !== 1 ? 's' : ''})`);
+          return { updated: true, newValue: linkData };
+        } catch (error) {
+          spinner.fail('Failed to create issue links');
+          throw error;
+        }
+      }
+
+      // Update the ticket (standard field update)
       const spinner = ora(`Updating ${field.displayName}...`).start();
 
       await this.jiraService.updateTicketField(ticketKey, field.key, newValue, this.config);
@@ -1440,7 +1501,7 @@ class JiraTicketCLI {
     }
   }
 
-  async editArrayField(field) {
+  async editArrayField(field, ticketKey) {
     // For components and other array fields
     if (field.key === 'components') {
       // Reuse component selection logic
@@ -1468,6 +1529,64 @@ class JiraTicketCLI {
         return selectedComponents.map(name => ({ name }));
       } catch (error) {
         console.error(chalk.red(`Error fetching components: ${error.message}`));
+        return null;
+      }
+    }
+
+    // For issue links
+    if (field.key === 'issuelinks') {
+      try {
+        console.log(chalk.cyan('\n🔗 Linking Issues'));
+
+        const spinner = ora('Fetching linkable issues...').start();
+        const availableIssues = await this.jiraService.getLinkableIssues(this.config, ticketKey);
+        spinner.succeed(`Found ${availableIssues.length} linkable issues`);
+
+        // Parse current links
+        let currentIssues = [];
+        if (Array.isArray(field.currentValue)) {
+          currentIssues = field.currentValue;
+        }
+
+        console.log(chalk.gray('Current linked issues: ' + (currentIssues.length > 0 ? currentIssues.join(', ') : 'None')));
+
+        const selectedIssues = await this.selectIssues(availableIssues, currentIssues);
+
+        if (selectedIssues.length === 0) {
+          console.log(chalk.yellow('No new issues selected to link.'));
+          return null; // Cancel - don't modify existing links
+        }
+
+        // Prompt for link type
+        const linkTypeAnswer = await inquirer.prompt([{
+          type: 'list',
+          name: 'linkType',
+          message: 'Select link type:',
+          choices: [
+            { name: 'Relates to', value: 'Relates' },
+            { name: 'Blocks', value: 'Blocks' },
+            { name: 'Is blocked by', value: 'Blocked' },
+            { name: 'Duplicates', value: 'Duplicate' },
+            { name: 'Is duplicated by', value: 'Duplicated' },
+            { name: 'Clones', value: 'Cloners' },
+            { name: 'Is cloned by', value: 'Cloners' },
+            new inquirer.Separator(),
+            'Cancel'
+          ]
+        }]);
+
+        if (linkTypeAnswer.linkType === 'Cancel') {
+          return null;
+        }
+
+        // Return special marker for issue links to use dedicated endpoint
+        return {
+          _issueLinkData: true,
+          linkType: linkTypeAnswer.linkType,
+          issues: selectedIssues.map(issue => issue.key)
+        };
+      } catch (error) {
+        console.error(chalk.red(`Error fetching issues: ${error.message}`));
         return null;
       }
     }
@@ -1506,6 +1625,87 @@ class JiraTicketCLI {
     }]);
 
     return answer.option === 'cancel' ? null : answer.option;
+  }
+
+  async editIssueField(field, ticketKey) {
+    // For parent, epic link, and other issue relationship fields
+    try {
+      const fieldName = field.displayName || field.key;
+      console.log(chalk.cyan(`\n🔗 Selecting ${fieldName}`));
+
+      // Determine if we should filter by issue type (e.g., only Epics for epic link)
+      let issueTypeFilter = null;
+      const fieldNameLower = fieldName.toLowerCase();
+      const fieldKeyLower = field.key.toLowerCase();
+
+      if (fieldNameLower.includes('epic') || fieldKeyLower.includes('epic')) {
+        issueTypeFilter = 'Epic';
+      }
+
+      const spinner = ora('Fetching linkable issues...').start();
+      const availableIssues = await this.jiraService.getLinkableIssues(this.config, ticketKey, issueTypeFilter);
+      spinner.succeed(`Found ${availableIssues.length} linkable issues${issueTypeFilter ? ` (${issueTypeFilter}s)` : ''}`);
+
+      // Show current value
+      const currentValue = field.currentValue;
+      if (currentValue && currentValue !== 'Unknown') {
+        console.log(chalk.gray(`Current ${fieldName}: ${currentValue}`));
+      } else {
+        console.log(chalk.gray(`Current ${fieldName}: (not set)`));
+      }
+
+      // Build choices list with issue key and summary (all strings for filtering)
+      const choices = [
+        '--- Clear (remove link) ---',
+        '--- Cancel ---'
+      ];
+
+      availableIssues.forEach(issue => {
+        const displayText = `${issue.key} - ${issue.summary.substring(0, 60)}${issue.summary.length > 60 ? '...' : ''}`;
+        choices.push(displayText);
+      });
+
+      const result = await this.customAutocompletePrompt({
+        message: `Select issue for ${fieldName} (type to filter, Enter to select):`,
+        choices: choices,
+        pageSize: this.config?.ui?.pageSize || 10,
+        nonSelectableItems: [],
+        ticketData: {},
+        selectedComponents: []
+      });
+
+      if (result === '--- Cancel ---') {
+        return null;
+      }
+
+      if (result === '--- Clear (remove link) ---') {
+        // Return null to clear the field
+        return null;
+      }
+
+      // Extract the issue key from the selected result
+      const issueKey = result.split(' - ')[0];
+      const selectedIssue = availableIssues.find(issue => issue.key === issueKey);
+
+      if (selectedIssue) {
+        console.log(chalk.green(`✓ Selected: ${issueKey}`));
+
+        // Different field types expect different formats:
+        // - parent field (standard): { key: "KEY" }
+        // - epic link (custom field): just "KEY" as string
+        // Check if this is a custom field (starts with customfield_)
+        if (field.key.startsWith('customfield_')) {
+          return issueKey; // Epic Link custom fields expect just the string key
+        } else {
+          return { key: issueKey }; // Parent field expects object
+        }
+      }
+
+      return null;
+    } catch (error) {
+      console.error(chalk.red(`Error fetching issues: ${error.message}`));
+      return null;
+    }
   }
 
   async editUserField(field) {
@@ -2549,6 +2749,64 @@ class JiraTicketCLI {
     }
 
     return selectedComponents;
+  }
+
+  async selectIssues(availableIssues, currentIssues = []) {
+    const selectedIssues = [];
+
+    // Extract issue keys from current issues
+    const currentIssueKeys = currentIssues.map(issue => issue.key || issue);
+
+    while (true) {
+      // Filter out already selected issues
+      const selectableIssues = availableIssues.filter(issue =>
+        !selectedIssues.some(selected => selected.key === issue.key) &&
+        !currentIssueKeys.includes(issue.key)
+      );
+
+      if (selectableIssues.length === 0) {
+        console.log(chalk.yellow('All issues have been selected.'));
+        break;
+      }
+
+      // Build choices list with issue key and summary
+      const choices = ['--- Finish selecting issues ---'];
+
+      selectableIssues.forEach(issue => {
+        const displayText = `${issue.key} - ${issue.summary.substring(0, 60)}${issue.summary.length > 60 ? '...' : ''}`;
+        choices.push(displayText);
+      });
+
+      const result = await this.customAutocompletePrompt({
+        message: selectedIssues.length === 0
+          ? 'Select issues to link (type to filter, Enter to select):'
+          : `   Select another issue (${selectedIssues.length} selected):`,
+        choices: choices,
+        pageSize: this.config?.ui?.pageSize || 10,
+        nonSelectableItems: [],
+        ticketData: {},
+        selectedComponents: []
+      });
+
+      if (result === '--- Finish selecting issues ---') {
+        break;
+      }
+
+      // Extract the issue key from the selected result
+      const issueKey = result.split(' - ')[0];
+      const selectedIssue = selectableIssues.find(issue => issue.key === issueKey);
+
+      if (selectedIssue) {
+        selectedIssues.push(selectedIssue);
+        console.log(chalk.green(`✓ Selected: ${issueKey}`));
+      }
+    }
+
+    if (selectedIssues.length === 0) {
+      console.log(chalk.yellow('No issues selected.'));
+    }
+
+    return selectedIssues;
   }
 
   async customAssigneePrompt(choices, ticketData, currentUser) {

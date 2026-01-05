@@ -751,6 +751,51 @@ class JiraService {
     }
   }
 
+  async getLinkableIssues(config, currentIssueKey = null, issueTypeFilter = null) {
+    if (!this.client) {
+      this.initializeClient(config);
+    }
+
+    try {
+      // JQL to get issues from the project
+      let jql = `project = "${config.projectKey}"`;
+
+      // Add issue type filter if specified (e.g., only Epics)
+      if (issueTypeFilter) {
+        jql += ` AND issuetype = "${issueTypeFilter}"`;
+      }
+
+      // Sort by key for consistent ordering (most recent ticket keys first)
+      jql += ` ORDER BY key DESC`;
+
+      // For Epics or filtered issue types, fetch all of them (Jira max is 1000)
+      // For general issues, fetch last 500
+      const maxResults = issueTypeFilter ? 1000 : 500;
+
+      const response = await this.client.post('/rest/api/3/search/jql', {
+        jql: jql,
+        fields: ['key', 'summary', 'status', 'issuetype', 'updated'],
+        maxResults: maxResults
+      });
+
+      return response.data.issues
+        .filter(issue => issue.key !== currentIssueKey) // Exclude the current issue
+        .map(issue => ({
+          key: issue.key,
+          summary: issue.fields.summary,
+          status: issue.fields.status.name,
+          workType: issue.fields.issuetype.name,
+          updated: issue.fields.updated
+        }));
+    } catch (error) {
+      if (error.response?.status === 400) {
+        throw new Error(`Invalid JQL query: ${error.response?.data?.errorMessages?.[0] || error.message}`);
+      } else {
+        throw new Error(`Failed to fetch linkable issues: ${error.response?.data?.errorMessages?.[0] || error.message}`);
+      }
+    }
+  }
+
   async getTicketDetails(ticketKey, config) {
     if (!this.client) {
       this.initializeClient(config);
@@ -866,18 +911,66 @@ class JiraService {
         }
       };
 
-      await this.client.put(`/rest/api/3/issue/${issueKey}`, updatePayload);
+      await this.client.put(`/rest/api/3/issue/${issueKey}`, updatePayload, {
+        timeout: 30000 // 30 second timeout
+      });
 
       return true;
     } catch (error) {
-      if (error.response?.status === 404) {
+      if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
+        throw new Error(`Request timed out. The Jira server may be slow or unreachable.`);
+      } else if (error.response?.status === 404) {
         throw new Error(`Ticket ${issueKey} not found`);
       } else if (error.response?.status === 403) {
         throw new Error(`Access denied to ticket ${issueKey}. You may not have permission to edit this ticket.`);
       } else if (error.response?.status === 400) {
-        throw new Error(`Invalid field value: ${error.response?.data?.errorMessages?.[0] || error.message}`);
+        const errorDetails = error.response?.data?.errors?.[fieldKey] || error.response?.data?.errorMessages?.[0] || error.message;
+        throw new Error(`Invalid field value for ${fieldKey}: ${errorDetails}`);
       } else {
         throw new Error(`Failed to update ticket: ${error.response?.data?.errorMessages?.[0] || error.message}`);
+      }
+    }
+  }
+
+  async createIssueLinks(fromIssueKey, linkData, config) {
+    if (!this.client) {
+      this.initializeClient(config);
+    }
+
+    try {
+      // Create each link individually using the dedicated issue link endpoint
+      const linkPromises = linkData.map(async (link) => {
+        const payload = {
+          type: {
+            name: link.type
+          },
+          inwardIssue: {
+            key: fromIssueKey
+          },
+          outwardIssue: {
+            key: link.issueKey
+          }
+        };
+
+        return this.client.post('/rest/api/3/issueLink', payload, {
+          timeout: 30000 // 30 second timeout
+        });
+      });
+
+      await Promise.all(linkPromises);
+      return true;
+    } catch (error) {
+      if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
+        throw new Error(`Request timed out. The Jira server may be slow or unreachable.`);
+      } else if (error.response?.status === 404) {
+        throw new Error(`Issue not found`);
+      } else if (error.response?.status === 403) {
+        throw new Error(`Access denied. You may not have permission to link issues.`);
+      } else if (error.response?.status === 400) {
+        const errorDetails = error.response?.data?.errorMessages?.[0] || error.message;
+        throw new Error(`Invalid link data: ${errorDetails}`);
+      } else {
+        throw new Error(`Failed to create issue links: ${error.response?.data?.errorMessages?.[0] || error.message}`);
       }
     }
   }
