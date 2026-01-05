@@ -1354,7 +1354,12 @@ class JiraTicketCLI {
     const fieldType = field.schema?.type;
 
     try {
-      // Check for special fields first (parent, epic link, etc.)
+      // Check for capitalized field first
+      if (field.key === this.config?.customFields?.capitalized || field.displayName === 'Capitalized') {
+        return await this.editCapitalizedField(ticketKey, field, currentTicket);
+      }
+
+      // Check for special fields (parent, epic link, etc.)
       if (field.key === 'parent' ||
           field.key.includes('epic') ||
           field.displayName?.toLowerCase().includes('parent') ||
@@ -2438,6 +2443,35 @@ class JiraTicketCLI {
 
     console.log(chalk.green(`✓ Work type: ${workType}`));
 
+    // Ask about capitalization after work type
+    const capitalized = await this.askCapitalized();
+    console.log(chalk.green(`✓ Capitalized: ${capitalized}`));
+
+    // Handle epic linking based on capitalization
+    let epicLink = null;
+    if (capitalized === 'Yes') {
+      if (workType !== 'Epic') {
+        // Capitalized tickets (except Epics) must link to an epic
+        epicLink = await this.selectOrCreateEpic();
+        console.log(chalk.green(`✓ Epic Link: ${epicLink}`));
+      }
+    } else {
+      // Capitalized = No: optional epic link
+      const shouldLinkEpic = await inquirer.prompt([{
+        type: 'confirm',
+        name: 'linkEpic',
+        message: 'Would you like to link this to an epic?',
+        default: false
+      }]);
+
+      if (shouldLinkEpic.linkEpic) {
+        epicLink = await this.selectEpic();
+        if (epicLink) {
+          console.log(chalk.green(`✓ Epic Link: ${epicLink}`));
+        }
+      }
+    }
+
     const remainingQuestions = [
       {
         type: 'input',
@@ -2512,7 +2546,9 @@ class JiraTicketCLI {
 
     // Combine all data
     const ticketData = {
-      ...basicAnswers,
+      workType,
+      summary: basicAnswers.summary,
+      description: basicAnswers.description,
       components: selectedComponents,
       availableComponents: components,  // Include for dry run simulation
       status: selectedStatus,
@@ -2520,16 +2556,43 @@ class JiraTicketCLI {
       assignee: selectedAssignee,
       availableAssignees: assignees,  // Include for dry run simulation
       currentUser: currentUser,  // Include for dry run simulation
-      ...remainingAnswers
+      priority: priorityAnswer,
+      ticketClassification: classificationAnswer,
+      capitalized,
+      epicLink
     };
+
+    // Add custom fields based on configuration
+    if (this.config?.customFields) {
+      if (this.config.customFields.ticketClassification && classificationAnswer) {
+        const format = this.config.customFields.ticketClassificationFormat || 'value';
+        if (format === 'value') {
+          ticketData[this.config.customFields.ticketClassification] = { value: classificationAnswer };
+        } else {
+          ticketData[this.config.customFields.ticketClassification] = classificationAnswer;
+        }
+      }
+
+      // Add capitalized field
+      if (this.config.customFields.capitalized && capitalized) {
+        const capitalizedId = capitalized === 'Yes' ? '10022' : '10023';
+        ticketData[this.config.customFields.capitalized] = { id: capitalizedId };
+      }
+    }
 
     // Don't clear screen - let user see the flow
 
     console.log(chalk.blue('🎫 Jira Ticket Creator\n'));
     console.log(chalk.green('✅ All data collected successfully!\n'));
-    console.log(chalk.white(`Work Type: ${basicAnswers.workType}`));
-    console.log(chalk.white(`Summary: ${basicAnswers.summary}`));
-    console.log(chalk.white(`Description: ${basicAnswers.description.substring(0, 80)}${basicAnswers.description.length > 80 ? '...' : ''}`));
+    console.log(chalk.white(`Work Type: ${workType}`));
+    console.log(chalk.white(`Capitalized: ${capitalized}`));
+    if (epicLink) {
+      console.log(chalk.white(`Epic Link: ${epicLink}`));
+    }
+    const summaryText = basicAnswers.summary || '';
+    const descText = basicAnswers.description || '';
+    console.log(chalk.white(`Summary: ${summaryText}`));
+    console.log(chalk.white(`Description: ${descText.substring(0, 80)}${descText.length > 80 ? '...' : ''}`));
     if (selectedComponents.length > 0) {
       console.log(chalk.white(`Components:`));
       selectedComponents.forEach(comp => console.log(chalk.white(`  • ${comp}`)));
@@ -2538,8 +2601,8 @@ class JiraTicketCLI {
     }
     console.log(chalk.white(`Status: ${selectedStatus ? selectedStatus.name : 'default'}`));
     console.log(chalk.white(`Assignee: ${selectedAssignee ? (selectedAssignee.displayName || 'Assign myself') : 'unassigned'}`));
-    console.log(chalk.white(`Priority: ${remainingAnswers.priority}`));
-    console.log(chalk.white(`Classification: ${remainingAnswers.ticketClassification}`));
+    console.log(chalk.white(`Priority: ${priorityAnswer}`));
+    console.log(chalk.white(`Classification: ${classificationAnswer}`));
 
     return ticketData;
   }
@@ -3901,5 +3964,203 @@ class JiraTicketCLI {
     }
   }
 }
+
+// Helper methods for Capitalized field
+JiraTicketCLI.prototype.askCapitalized = async function() {
+  const answer = await inquirer.prompt([{
+    type: 'list',
+    name: 'capitalized',
+    message: 'Will this be capitalized?',
+    choices: ['Yes', 'No'],
+    default: 'No'
+  }]);
+
+  return answer.capitalized;
+};
+
+JiraTicketCLI.prototype.getCapitalizedEpics = async function() {
+  const allEpics = await this.jiraService.getLinkableIssues(
+    this.config,
+    null,
+    'Epic'
+  );
+
+  // Filter to only epics with Capitalized = Yes and not Done/Closed
+  return allEpics.filter(epic => {
+    const capitalizedField = epic.fields?.customfield_10037;
+    const status = epic.fields?.status?.name;
+    const isDone = ['Done', 'Closed', 'Resolved', 'Complete', 'Completed'].some(
+      doneStatus => status?.toLowerCase().includes(doneStatus.toLowerCase())
+    );
+
+    return capitalizedField?.value === 'Yes' && !isDone;
+  });
+};
+
+JiraTicketCLI.prototype.selectOrCreateEpic = async function() {
+  const capitalizedEpics = await this.getCapitalizedEpics();
+
+  if (capitalizedEpics.length === 0) {
+    console.log(chalk.yellow('\n⚠️  No capitalized epics found.'));
+
+    const answer = await inquirer.prompt([{
+      type: 'list',
+      name: 'action',
+      message: 'What would you like to do?',
+      choices: [
+        { name: 'Create a new Epic', value: 'create' },
+        { name: 'Cancel ticket creation', value: 'cancel' }
+      ]
+    }]);
+
+    if (answer.action === 'cancel') {
+      throw new Error('Ticket creation cancelled - capitalized tickets must be linked to an epic');
+    }
+
+    return await this.createEpicAndContinue();
+  }
+
+  // Show existing capitalized epics
+  return await this.selectEpic(capitalizedEpics);
+};
+
+JiraTicketCLI.prototype.selectEpic = async function(epics = null) {
+  if (!epics) {
+    epics = await this.jiraService.getLinkableIssues(
+      this.config,
+      null,
+      'Epic'
+    );
+  }
+
+  if (epics.length === 0) {
+    console.log(chalk.yellow('No epics found'));
+    return null;
+  }
+
+  // Format epics as strings for autocomplete
+  const epicChoices = epics.map(epic =>
+    `${epic.key}: ${epic.summary}`
+  );
+
+  // Add "Create new Epic" option at the top
+  const choices = [
+    '➕ Create new Epic',
+    ...epicChoices
+  ];
+
+  const answer = await this.customAutocompletePrompt({
+    message: 'Select an epic to link to (type to filter):',
+    choices,
+    pageSize: this.config?.ui?.pageSize || 10
+  });
+
+  if (!answer) {
+    return null; // User cancelled
+  }
+
+  // Check if user wants to create a new epic
+  if (answer === '➕ Create new Epic') {
+    return await this.createEpicAndContinue();
+  }
+
+  // Extract the epic key from the selection (format: "KEY: summary")
+  const epicKey = answer.split(':')[0].trim();
+  return epicKey;
+};
+
+JiraTicketCLI.prototype.createEpicAndContinue = async function() {
+  console.log(chalk.blue('\n🎯 Creating new Epic...\n'));
+
+  // Save current context
+  const originalCollecting = this._collectingEpic;
+  this._collectingEpic = true;
+
+  try {
+    // Recursively call collectTicketData but it will be for the Epic
+    const epicData = await this.collectTicketData(false);
+
+    // Force work type to Epic and capitalized to Yes
+    epicData.workType = 'Epic';
+    epicData.capitalized = 'Yes';
+    if (this.config?.customFields?.capitalized) {
+      epicData[this.config.customFields.capitalized] = { id: '10022' }; // Yes
+    }
+    // No epic link for the epic itself
+    delete epicData.epicLink;
+
+    // Create the epic
+    const spinner = ora('Creating epic...').start();
+    const result = await this.jiraService.createTicket(epicData, this.config);
+    spinner.succeed(`Epic created: ${result.key}`);
+    console.log(chalk.blue(`Link: ${this.config.jiraUrl}/browse/${result.key}\n`));
+
+    return result.key;
+  } finally {
+    this._collectingEpic = originalCollecting;
+  }
+};
+
+JiraTicketCLI.prototype.editCapitalizedField = async function(ticketKey, field, currentTicket) {
+  const currentValue = currentTicket.fullFields?.[field.key];
+  const currentCapitalized = currentValue?.value || 'No';
+
+  const answer = await inquirer.prompt([{
+    type: 'list',
+    name: 'value',
+    message: 'Will this be capitalized?',
+    choices: ['Yes', 'No'],
+    default: currentCapitalized
+  }]);
+
+  const newCapitalized = answer.value;
+
+  // Update the capitalized field
+  const capitalizedId = newCapitalized === 'Yes' ? '10022' : '10023';
+  const spinner = ora('Updating Capitalized field...').start();
+
+  try {
+    await this.jiraService.updateTicketField(
+      ticketKey,
+      field.key,
+      { id: capitalizedId },
+      this.config
+    );
+    spinner.succeed('Capitalized field updated');
+
+    // If changing from No to Yes, require epic link
+    if (currentCapitalized === 'No' && newCapitalized === 'Yes') {
+      const workType = currentTicket.workType || currentTicket.fields?.issuetype?.name;
+
+      if (workType !== 'Epic') {
+        console.log(chalk.yellow('\n⚠️  Capitalized tickets must be linked to an epic.'));
+        const epicLink = await this.selectOrCreateEpic();
+
+        if (epicLink) {
+          const epicFieldId = this.config.customFields?.epicLink || 'customfield_10014';
+          const epicSpinner = ora('Linking to epic...').start();
+
+          try {
+            await this.jiraService.updateTicketField(
+              ticketKey,
+              epicFieldId,
+              epicLink,
+              this.config
+            );
+            epicSpinner.succeed(`Linked to epic ${epicLink}`);
+          } catch (error) {
+            epicSpinner.fail('Failed to link epic');
+            throw error;
+          }
+        }
+      }
+    }
+
+    return { updated: true, newValue: { id: capitalizedId, value: newCapitalized } };
+  } catch (error) {
+    spinner.fail('Failed to update Capitalized field');
+    throw error;
+  }
+};
 
 module.exports = JiraTicketCLI;

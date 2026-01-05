@@ -330,6 +330,12 @@ class JiraService {
       console.log(chalk.white('   Use --list-fields to find your field ID.\n'));
     }
 
+    // Add capitalized field
+    if (config.customFields?.capitalized && cleanTicketData.capitalized) {
+      const capitalizedId = cleanTicketData.capitalized === 'Yes' ? '10022' : '10023';
+      payload.fields[config.customFields.capitalized] = { id: capitalizedId };
+    }
+
     return payload;
   }
 
@@ -342,6 +348,22 @@ class JiraService {
 
     try {
       const response = await this.client.post('/rest/api/3/issue', payload);
+
+      // If there's an epic link, set it after creation
+      if (ticketData.epicLink) {
+        const epicFieldId = config.customFields?.epicLink || 'customfield_10014'; // common epic link field
+        try {
+          await this.updateTicketField(
+            response.data.key,
+            epicFieldId,
+            ticketData.epicLink,
+            config
+          );
+        } catch (epicError) {
+          console.warn('Warning: Failed to link epic:', epicError.message);
+        }
+      }
+
       return response.data;
     } catch (error) {
       if (error.response) {
@@ -765,6 +787,11 @@ class JiraService {
         jql += ` AND issuetype = "${issueTypeFilter}"`;
       }
 
+      // Exclude Done/Closed statuses for Epics
+      if (issueTypeFilter === 'Epic') {
+        jql += ` AND status NOT IN (Done, Closed, Resolved, Complete, Completed)`;
+      }
+
       // Sort by key for consistent ordering (most recent ticket keys first)
       jql += ` ORDER BY key DESC`;
 
@@ -774,7 +801,7 @@ class JiraService {
 
       const response = await this.client.post('/rest/api/3/search/jql', {
         jql: jql,
-        fields: ['key', 'summary', 'status', 'issuetype', 'updated'],
+        fields: ['key', 'summary', 'status', 'issuetype', 'updated', 'customfield_10037'], // Include Capitalized field
         maxResults: maxResults
       });
 
@@ -783,9 +810,14 @@ class JiraService {
         .map(issue => ({
           key: issue.key,
           summary: issue.fields.summary,
-          status: issue.fields.status.name,
-          workType: issue.fields.issuetype.name,
-          updated: issue.fields.updated
+          status: issue.fields.status?.name,
+          workType: issue.fields.issuetype?.name,
+          updated: issue.fields.updated,
+          fields: {
+            status: issue.fields.status,
+            issuetype: issue.fields.issuetype,
+            customfield_10037: issue.fields.customfield_10037
+          }
         }));
     } catch (error) {
       if (error.response?.status === 400) {
