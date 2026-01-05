@@ -8,18 +8,40 @@
   },
   "scripts": {
     "start": "node bin/jira-ticket.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage"
   },
-  "keywords": ["jira", "cli", "ticket", "atlassian"],
+  "jest": {
+    "testEnvironment": "node",
+    "coverageDirectory": "coverage",
+    "collectCoverageFrom": [
+      "src/**/*.js",
+      "!src/**/*.test.js"
+    ],
+    "testMatch": [
+      "**/tests/**/*.test.js"
+    ]
+  },
+  "keywords": [
+    "jira",
+    "cli",
+    "ticket",
+    "atlassian"
+  ],
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "axios": "^1.6.0",
+    "chalk": "^4.1.2",
+    "commander": "^11.1.0",
+    "fs-extra": "^11.1.1",
     "inquirer": "^8.2.6",
     "inquirer-autocomplete-prompt": "^2.0.1",
-    "axios": "^1.6.0",
-    "commander": "^11.1.0",
-    "chalk": "^4.1.2",
-    "ora": "^5.4.1",
-    "fs-extra": "^11.1.1"
+    "ora": "^5.4.1"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "jest": "^30.2.0"
   }
 }
