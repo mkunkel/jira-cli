@@ -71,4 +71,17 @@ program
     await cli.showTicket(ticketKey);
   });
 
+// Log time command
+program
+  .command('log [ticketKey] [timeString...]')
+  .description('Log time on a Jira ticket')
+  .action(async (ticketKey, timeStringArray) => {
+    const cli = new JiraTicketCLI();
+    // Join array arguments into a single time string
+    const timeString = timeStringArray && timeStringArray.length > 0
+      ? timeStringArray.join(' ')
+      : undefined;
+    await cli.logTime(ticketKey, timeString);
+  });
+
 program.parse();

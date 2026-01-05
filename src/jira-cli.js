@@ -4163,4 +4163,210 @@ JiraTicketCLI.prototype.editCapitalizedField = async function(ticketKey, field, 
   }
 };
 
+/**
+ * Log time on a ticket
+ */
+JiraTicketCLI.prototype.logTime = async function(ticketKey, timeString) {
+  try {
+    await this.loadConfig();
+    await this.validateToken();
+
+    // If no ticket key provided, select from list
+    if (!ticketKey) {
+      ticketKey = await this.selectTicketForEdit();
+      if (!ticketKey) {
+        return;
+      }
+    } else {
+      // Normalize ticket key (e.g., "123" -> "PROJECT-123")
+      ticketKey = this.normalizeTicketKey(ticketKey);
+    }
+
+    console.log(chalk.blue(`\n⏱️  Log Time on ${ticketKey}\n`));
+
+    // Get current logged time
+    const currentTime = await this.getCurrentLoggedTime(ticketKey);
+    console.log(chalk.cyan(`Current logged time: ${chalk.white(currentTime)}\n`));
+
+    let timeSpent;
+
+    // If time string provided, validate it
+    if (timeString) {
+      const validation = this.validateTimeFormat(timeString);
+      if (validation !== true) {
+        throw new Error(validation);
+      }
+      timeSpent = timeString;
+      console.log(chalk.green(`Time to log: ${timeSpent}\n`));
+    } else {
+      // Display time syntax guide
+      this.displayTimeSyntaxGuide();
+
+      // Prompt for time spent
+      const timeAnswer = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 'timeSpent',
+          message: 'Time spent:',
+          validate: (input) => this.validateTimeFormat(input)
+        }
+      ]);
+      timeSpent = timeAnswer.timeSpent;
+    }
+
+    // Prompt for optional comment (only if interactive mode)
+    let comment;
+    if (!timeString) {
+      const { addComment } = await inquirer.prompt([
+        {
+          type: 'confirm',
+          name: 'addComment',
+          message: 'Add a comment?',
+          default: false
+        }
+      ]);
+
+      if (addComment) {
+        const commentAnswer = await inquirer.prompt([
+          {
+            type: 'input',
+            name: 'comment',
+            message: 'Comment:',
+            validate: (input) => input.trim().length > 0 || 'Comment cannot be empty'
+          }
+        ]);
+        comment = commentAnswer.comment;
+      }
+    }
+
+    // Log the work
+    const spinner = ora('Logging time...').start();
+    try {
+      const started = new Date().toISOString().replace('Z', '+0000');
+      await this.jiraService.logWorklog(ticketKey, timeSpent, comment, started, this.config);
+      spinner.succeed('Time logged successfully');
+
+      // Show updated total
+      const newTotal = await this.getCurrentLoggedTime(ticketKey);
+      console.log(chalk.green(`\n✓ Total logged time: ${chalk.white.bold(newTotal)}`));
+    } catch (error) {
+      spinner.fail('Failed to log time');
+      throw error;
+    }
+  } catch (error) {
+    console.error(chalk.red('Error:'), error.message);
+    if (process.env.NODE_ENV !== 'test') {
+      process.exit(1);
+    }
+    throw error;
+  }
+};
+
+/**
+ * Get current logged time for a ticket
+ */
+JiraTicketCLI.prototype.getCurrentLoggedTime = async function(ticketKey) {
+  const worklogData = await this.jiraService.getWorklogs(ticketKey, this.config);
+
+  if (!worklogData.worklogs || worklogData.worklogs.length === 0) {
+    return '0m';
+  }
+
+  const totalSeconds = worklogData.worklogs.reduce(
+    (sum, log) => sum + (log.timeSpentSeconds || 0),
+    0
+  );
+
+  return this.formatSecondsToTime(totalSeconds);
+};
+
+/**
+ * Format seconds to Jira time format
+ */
+JiraTicketCLI.prototype.formatSecondsToTime = function(seconds) {
+  if (seconds === 0) return '0m';
+
+  const weeks = Math.floor(seconds / (5 * 8 * 3600));
+  seconds %= (5 * 8 * 3600);
+
+  const days = Math.floor(seconds / (8 * 3600));
+  seconds %= (8 * 3600);
+
+  const hours = Math.floor(seconds / 3600);
+  seconds %= 3600;
+
+  const minutes = Math.floor(seconds / 60);
+
+  const parts = [];
+  if (weeks > 0) parts.push(`${weeks}w`);
+  if (days > 0) parts.push(`${days}d`);
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0) parts.push(`${minutes}m`);
+
+  return parts.join(' ') || '0m';
+};
+
+/**
+ * Display time syntax guide
+ */
+JiraTicketCLI.prototype.displayTimeSyntaxGuide = function() {
+  console.log(chalk.gray('Time format examples:'));
+  console.log(chalk.gray('  2h       = 2 hours'));
+  console.log(chalk.gray('  30m      = 30 minutes'));
+  console.log(chalk.gray('  1d       = 1 day (8 hours)'));
+  console.log(chalk.gray('  1w       = 1 week (5 days)'));
+  console.log(chalk.gray('  2h 30m   = 2 hours 30 minutes'));
+  console.log(chalk.gray('  1d 4h    = 1 day 4 hours\n'));
+};
+
+/**
+ * Validate time format
+ */
+JiraTicketCLI.prototype.validateTimeFormat = function(input) {
+  if (!input || input.trim().length === 0) {
+    return 'Time cannot be empty';
+  }
+
+  const trimmed = input.trim();
+
+  // First check: ensure only valid characters (digits, w, d, h, m, and spaces)
+  if (!/^[\d wdhm]+$/.test(trimmed)) {
+    return 'Invalid time format. Use combinations like: 2h, 30m, 1d 4h, 2h 30m, etc.';
+  }
+
+  // Extract all time units (number + unit letter)
+  const units = trimmed.match(/\d+[wdhm]/g);
+
+  if (!units || units.length === 0) {
+    return 'Invalid time format. Use combinations like: 2h, 30m, 1d 4h, 2h 30m, etc.';
+  }
+
+  // If multiple units, they must be space-separated
+  if (units.length > 1) {
+    const expectedFormat = units.join(' ');
+    if (trimmed !== expectedFormat) {
+      return 'Multiple time units must be separated by spaces (e.g., "2h 30m" not "2h30m")';
+    }
+  } else {
+    // Single unit: should not have extra spaces
+    if (trimmed !== units[0]) {
+      return 'Invalid time format. Use combinations like: 2h, 30m, 1d 4h, 2h 30m, etc.';
+    }
+  }
+
+  // Validate order: w, d, h, m
+  const order = { w: 0, d: 1, h: 2, m: 3 };
+  let lastOrder = -1;
+  for (const unit of units) {
+    const unitType = unit.slice(-1);
+    const currentOrder = order[unitType];
+    if (currentOrder <= lastOrder) {
+      return 'Time units must be in order: weeks, days, hours, minutes (e.g., "1d 2h" not "2h 1d")';
+    }
+    lastOrder = currentOrder;
+  }
+
+  return true;
+};
+
 module.exports = JiraTicketCLI;

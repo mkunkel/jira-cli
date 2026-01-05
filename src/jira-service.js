@@ -1006,6 +1006,71 @@ class JiraService {
       }
     }
   }
+
+  /**
+   * Get worklogs for an issue
+   */
+  async getWorklogs(issueKey, config) {
+    if (!this.client) {
+      this.initializeClient(config);
+    }
+
+    try {
+      const response = await this.client.get(`/rest/api/3/issue/${issueKey}/worklog`);
+      return response.data;
+    } catch (error) {
+      if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
+        throw new Error('Request timed out. Please check your connection and try again.');
+      }
+      throw new Error(`Failed to get worklogs: ${error.response?.data?.errorMessages?.[0] || error.message}`);
+    }
+  }
+
+  /**
+   * Log work on an issue
+   */
+  async logWorklog(issueKey, timeSpent, comment, started, config) {
+    if (!this.client) {
+      this.initializeClient(config);
+    }
+
+    try {
+      const payload = {
+        timeSpent: timeSpent,
+        started: started || new Date().toISOString().replace('Z', '+0000')
+      };
+
+      if (comment) {
+        payload.comment = {
+          type: 'doc',
+          version: 1,
+          content: [
+            {
+              type: 'paragraph',
+              content: [
+                {
+                  type: 'text',
+                  text: comment
+                }
+              ]
+            }
+          ]
+        };
+      }
+
+      const response = await this.client.post(
+        `/rest/api/3/issue/${issueKey}/worklog`,
+        payload,
+        { timeout: 10000 }
+      );
+      return response.data;
+    } catch (error) {
+      if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
+        throw new Error('Request timed out. Please check your connection and try again.');
+      }
+      throw new Error(`Failed to log work: ${error.response?.data?.errorMessages?.[0] || error.message}`);
+    }
+  }
 }
 
 module.exports = JiraService;

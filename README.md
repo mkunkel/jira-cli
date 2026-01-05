@@ -285,6 +285,40 @@ The `show` command provides:
 - **Direct Link**: Includes clickable Jira URL for quick browser access
 - **Custom Field Support**: Shows all meaningful custom fields with proper names and values
 
+### Log Time on Tickets
+```bash
+./bin/jira-ticket.js log [TICKET-KEY] [TIME]  # Log time on a ticket
+jira log                               # Interactive mode: select ticket and enter time
+jira log PROJ-123                      # Interactive mode: enter time for specific ticket
+jira log 123                           # Interactive mode: enter time (uses your project key)
+jira log PROJ-123 2h                   # Direct mode: log 2 hours
+jira log 123 2h 30m                    # Direct mode: log 2 hours 30 minutes
+jira log 123 "2h 30m"                  # Direct mode: quoted time string (same result)
+```
+
+The `log` command provides:
+- **Current Time Display**: Shows total time already logged on the ticket
+- **Direct Time Entry**: Provide time as command argument for quick logging without prompts
+- **Interactive Mode**: If time not provided, shows time format guide and prompts for input
+- **Validated Input**: Ensures time format matches Jira's requirements (2h, 30m, 1d 4h, etc.)
+- **Optional Comments**: Add a comment with your time log entry (interactive mode only)
+- **Updated Total**: Shows new total time logged after submission
+- **Smart Selection**: If no ticket key provided, shows interactive list
+
+Supported time formats:
+- `2h` = 2 hours
+- `30m` = 30 minutes
+- `1d` = 1 day (8 hours)
+- `1w` = 1 week (5 days)
+- `2h 30m` = 2 hours 30 minutes (note: spaces required between units)
+- `1d 4h 30m` = 1 day 4 hours 30 minutes
+
+**Direct vs Interactive Mode:**
+- **Direct**: `jira log 123 2h 30m` - Logs time immediately, no prompts, no comment
+- **Interactive**: `jira log 123` - Shows current time, format guide, prompts for time and optional comment
+
+**Important**: When combining multiple units, they must be separated by spaces and in order (weeks, days, hours, minutes). For example, use `2h 30m`, not `2h30m` or `30m 2h`.
+
 ### Preview Mode with Optional Submit
 Preview the ticket details, API calls, and configuration changes, then optionally create the ticket:
 ```bash
