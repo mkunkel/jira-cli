@@ -258,7 +258,7 @@ The `edit` command provides:
 - **Smart Field Ordering**: CLI creation fields shown first (Work Type, Summary, Description, etc.), then alphabetical
 - **Current Value Display**: Shows existing field values before editing
 - **Type-Aware Editing**: Different input methods for strings, options, arrays, users
-- **Field Filtering**: Automatically excludes non-updatable fields (e.g., Software Capitalization Project)
+- **Field Filtering**: Displays all editable fields available for the ticket
 - **Back-Out Option**: Cancel field edits without updating
 - **Immediate Updates**: Ticket updated after each successful field change
 - **Continuous Editing**: Return to field list after each edit for multiple changes
@@ -323,9 +323,6 @@ After successful ticket creation:
 Key: DEMO-123
 ID: 10001
 Link: https://yourcompany.atlassian.net/browse/DEMO-123
-
-📝 Manual Step Required:
-Please manually update the "Software Capitalization Project" field in the Jira UI.
 ```
 
 ## Dry Run Example
@@ -362,9 +359,6 @@ Payload:
     ]
   }
 }
-
-📝 Manual Step Required:
-Please manually update the "Software Capitalization Project" field in the Jira UI.
 ```
 
 ## Installation Options

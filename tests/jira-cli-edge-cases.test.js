@@ -344,14 +344,14 @@ describe('JiraTicketCLI - Comprehensive Coverage', () => {
   });
 
   describe('Editable Fields Organization', () => {
-    it('should exclude Software Capitalization Project', () => {
+    it('should include all fields without exclusions', () => {
       const fields = {
         'summary': { name: 'Summary', schema: { type: 'string' } },
-        'customfield_10001': { name: 'Software Capitalization Project', schema: { type: 'string' } }
+        'customfield_10001': { name: 'Custom Field', schema: { type: 'string' } }
       };
 
       const result = cli.organizeEditableFields(fields, { summary: 'Test' });
-      expect(result.find(f => f.key === 'customfield_10001')).toBeUndefined();
+      expect(result).toHaveLength(2);
     });
 
     it('should handle empty editable fields', () => {

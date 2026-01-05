@@ -285,10 +285,10 @@ describe('JiraTicketCLI', () => {
   });
 
   describe('organizeEditableFields', () => {
-    it('should exclude non-updatable fields', () => {
+    it('should organize all editable fields', () => {
       const editableFields = {
         'summary': { name: 'Summary', schema: { type: 'string' } },
-        'customfield_10001': { name: 'Software Capitalization Project', schema: { type: 'string' } }
+        'customfield_10001': { name: 'Custom Field', schema: { type: 'string' } }
       };
 
       const ticket = { summary: 'Test' };
@@ -296,7 +296,7 @@ describe('JiraTicketCLI', () => {
       const result = cli.organizeEditableFields(editableFields, ticket);
 
       expect(result.find(f => f.key === 'summary')).toBeDefined();
-      expect(result.find(f => f.key === 'customfield_10001')).toBeUndefined();
+      expect(result.find(f => f.key === 'customfield_10001')).toBeDefined();
     });
 
     it('should order CLI fields first', () => {

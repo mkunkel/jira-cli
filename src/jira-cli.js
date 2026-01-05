@@ -1170,25 +1170,10 @@ class JiraTicketCLI {
   }
 
   organizeEditableFields(editableFields, currentTicket) {
-    // Fields to exclude from editing (non-updatable fields)
-    const excludedFields = [
-      'Software Capitalization Project',
-      'software capitalization project',
-      'Software_Capitalization_Project'
-    ];
-
-    // Filter out excluded fields by checking field name and display name
+    // No fields are excluded from editing anymore
     const filteredEditableFields = {};
     for (const [key, fieldMeta] of Object.entries(editableFields)) {
-      const fieldName = (fieldMeta.name || key).toLowerCase();
-      const isExcluded = excludedFields.some(excluded =>
-        fieldName.includes(excluded.toLowerCase()) ||
-        key.toLowerCase().includes(excluded.toLowerCase())
-      );
-
-      if (!isExcluded) {
-        filteredEditableFields[key] = fieldMeta;
-      }
+      filteredEditableFields[key] = fieldMeta;
     }
 
     // Define CLI creation order with Jira field mappings
@@ -3746,9 +3731,6 @@ class JiraTicketCLI {
         console.log(chalk.gray('(Component tracking is disabled)'));
       }
     }
-
-    console.log(chalk.yellow('\n📝 Manual Step Required:'));
-    console.log(chalk.white('After creating the ticket, please manually update the "Software Capitalization Project" field in the Jira UI.'));
   }
 
   async createTicket(ticketData) {
@@ -3783,9 +3765,6 @@ class JiraTicketCLI {
       console.log(chalk.white(`Key: ${result.key}`));
       console.log(chalk.white(`ID: ${result.id}`));
       console.log(chalk.blue(`Link: ${this.config.jiraUrl}/browse/${result.key}`));
-
-      console.log(chalk.yellow('\n📝 Manual Step Required:'));
-      console.log(chalk.white('Please manually update the "Software Capitalization Project" field in the Jira UI.'));
 
     } catch (error) {
       spinner.fail('Failed to create ticket');
